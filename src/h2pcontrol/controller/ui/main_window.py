@@ -1,0 +1,81 @@
+import asyncio
+from collections.abc import Coroutine
+from typing import Any
+
+from PySide6.QtCore import QSettings, QTimer
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QLabel,
+    QMainWindow,
+    QStatusBar,
+    QWidget,
+)
+
+from ..runtime.session import Session
+from .settings_dialog import SettingsDialog
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("h2pcontrol")
+
+        self._settings = QSettings("h2pcontrol", "controller")
+        address = self._settings.value("manager_address", "localhost:50051")
+        self._session = Session(manager_address=str(address))
+
+        self._build_menu()
+        self._build_central()
+        self._build_status_bar()
+
+        self._bg_tasks: set[asyncio.Task] = set()
+
+        # Ping the manager every 10 seconds
+        self._ping_timer = QTimer(self)
+        self._ping_timer.timeout.connect(self._schedule_ping)
+        self._ping_timer.start(10_000)
+        self._schedule_ping()
+
+    def _build_menu(self) -> None:
+        menubar = self.menuBar()
+
+        edit_menu = menubar.addMenu("Edit")
+        settings_action = QAction("Settings…", self)
+        settings_action.triggered.connect(self._on_settings)
+        edit_menu.addAction(settings_action)
+
+    def _build_central(self) -> None:
+        central = QWidget()
+        self.setCentralWidget(central)
+
+    def _build_status_bar(self) -> None:
+        bar = QStatusBar()
+        self.setStatusBar(bar)
+        self._conn_label = QLabel("● Disconnected")
+        self._conn_label.setStyleSheet("color: red;")
+        bar.addPermanentWidget(self._conn_label)
+
+    def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+        task = asyncio.ensure_future(coro)
+        self._bg_tasks.add(task)
+        task.add_done_callback(self._bg_tasks.discard)
+
+    def _schedule_ping(self) -> None:
+        self._spawn(self._ping())
+
+    async def _ping(self) -> None:
+        connected = await self._session.ping_manager()
+        if connected:
+            self._conn_label.setText(f"● {self._session.manager_address}")
+            self._conn_label.setStyleSheet("color: green;")
+        else:
+            self._conn_label.setText("● Disconnected")
+            self._conn_label.setStyleSheet("color: red;")
+
+    def _on_settings(self) -> None:
+        dlg = SettingsDialog(self._session.manager_address, self)
+        if dlg.exec():
+            address = dlg.address()
+            self._session.manager_address = address
+            self._settings.setValue("manager_address", address)
+            self._schedule_ping()
