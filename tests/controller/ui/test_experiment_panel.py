@@ -1,16 +1,9 @@
 import pandas as pd
 import pytest
-from PySide6.QtWidgets import QApplication
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
 from h2pcontrol.controller.ui.experiment_panel import ExperimentPanel, _ParamApplyError
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 class Exp(Experiment):
@@ -22,8 +15,9 @@ class Exp(Experiment):
 
 
 @pytest.fixture
-def panel(qapp):
+def panel(qtbot):
     p = ExperimentPanel()
+    qtbot.addWidget(p)
     p.load_experiment(Exp)
     return p
 
@@ -48,7 +42,8 @@ def test_initialise_raises_on_invalid_value(panel):
         panel.initialise_experiment()
 
 
-def test_initialise_raises_when_no_experiment_loaded(qapp):
+def test_initialise_raises_when_no_experiment_loaded(qtbot):
     panel = ExperimentPanel()
+    qtbot.addWidget(panel)
     with pytest.raises(RuntimeError, match="No experiment loaded"):
         panel.initialise_experiment()
