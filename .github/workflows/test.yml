@@ -13,3 +13,5 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y '^libxcb.*-dev' libx11-xcb-dev libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1
       - run: uv sync --group dev
       - run: uv run pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
