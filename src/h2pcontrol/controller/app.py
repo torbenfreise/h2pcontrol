@@ -1,8 +1,6 @@
 import asyncio
 import sys
 
-# need to import this before qasync otherwise we get conflicts
-import pandas as pd  # noqa: F401
 import qasync
 from PySide6.QtWidgets import QApplication
 

@@ -9,7 +9,7 @@ description = "The controller software"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Torben Freise", email = "torben.freise@gmail.com" }]
-requires-python = "==3.12.0"
+requires-python = ">=3.12"
 dependencies = [
     "grpcio>=1.80.0",
     "beyer-labs-h2pcontrol-grpc-python>=1.80.dev0,<2",
