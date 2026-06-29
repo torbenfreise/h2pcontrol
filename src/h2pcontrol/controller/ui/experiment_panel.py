@@ -37,13 +37,16 @@ class _ParamRow(QWidget):
     def _on_value_changed(self, text: str) -> None:
         """Validate the users input."""
         try:
-            value = self._spec.dtype(text.strip()) if self._spec.dtype is not None else text.strip()
-            self._spec.validate(value)
+            self._spec.validate(text.strip())
             self._single.setStyleSheet("")
             self._single.setToolTip(self._spec.description or "")
         except (ValueError, TypeError) as exc:
             self._single.setStyleSheet("border: 1px solid red;")
             self._single.setToolTip(str(exc))
+
+
+class _ParamApplyError(Exception):
+    """Raised when a parameter value cannot be applied."""
 
 
 class ExperimentPanel(QScrollArea):
@@ -75,3 +78,19 @@ class ExperimentPanel(QScrollArea):
             row = _ParamRow(name, spec)
             self._form.addRow(name, row)
             self._rows[name] = row
+
+    def initialise_experiment(self) -> Experiment:
+        """Instantiate the loaded experiment class with current parameter values.
+
+        :raises _ParamApplyError: if a parameter is invalid.
+        :raises RuntimeError: if no experiment is loaded.
+        """
+        if self._cls is None:
+            raise RuntimeError("No experiment loaded")
+        exp = self._cls()
+        for name, row in self._rows.items():
+            try:
+                setattr(exp, name, row._single.text().strip())
+            except (ValueError, TypeError) as exc:
+                raise _ParamApplyError(f"Parameter {name!r}: {exc}") from exc
+        return exp

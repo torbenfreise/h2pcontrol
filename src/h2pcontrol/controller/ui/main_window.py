@@ -15,8 +15,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..framework.experiment import Context, Experiment
 from ..runtime.session import Session
-from .experiment_panel import ExperimentPanel
+from .experiment_panel import ExperimentPanel, _ParamApplyError
+from .run_controls import RunControls
 from .settings_dialog import SettingsDialog
 
 
@@ -34,6 +36,7 @@ class MainWindow(QMainWindow):
         self._build_status_bar()
 
         self._bg_tasks: set[asyncio.Task] = set()
+        self._run_task: asyncio.Task | None = None
 
         # Ping the manager every 10 seconds
         self._ping_timer = QTimer(self)
@@ -62,6 +65,11 @@ class MainWindow(QMainWindow):
 
         self._experiment_panel = ExperimentPanel()
         layout.addWidget(self._experiment_panel, stretch=1)
+
+        self._run_controls = RunControls()
+        self._run_controls.run_requested.connect(self._on_run)
+        self._run_controls.stop_requested.connect(self._on_stop)
+        layout.addWidget(self._run_controls)
 
         self.setCentralWidget(central)
 
@@ -103,6 +111,35 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             traceback.print_exc()
             QMessageBox.critical(self, "Load Error", str(exc))
+
+    def _on_run(self, shots: int) -> None:
+        try:
+            experiment = self._experiment_panel.initialise_experiment()
+        except _ParamApplyError as exc:
+            QMessageBox.warning(self, "Invalid Parameters", str(exc))
+            return
+        self._run_task = asyncio.ensure_future(self._run_loop(experiment, shots))
+        self._bg_tasks.add(self._run_task)
+        self._run_task.add_done_callback(self._bg_tasks.discard)
+        self._run_controls.set_running(True)
+
+    def _on_stop(self) -> None:
+        if self._run_task and not self._run_task.done():
+            self._run_task.cancel()
+
+    async def _run_loop(self, experiment: Experiment, shots: int) -> None:
+        try:
+            for i in range(shots):
+                frame = await experiment.shot(Context(shot_idx=i))
+                self._run_controls.on_shot_complete(i, frame)
+        except asyncio.CancelledError:
+            self._run_controls.log("Stopped")
+        except Exception as exc:
+            traceback.print_exc()
+            self._run_controls.log(f"Error: {exc}")
+        finally:
+            self._run_controls.set_running(False)
+            self._run_task = None
 
     def _on_settings(self) -> None:
         dlg = SettingsDialog(self._session.manager_address, self)
