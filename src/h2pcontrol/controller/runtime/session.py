@@ -1,6 +1,7 @@
 import asyncio
 import importlib.util
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import grpc
@@ -31,6 +32,8 @@ class Session:
 
     def load_experiment(self, path: str) -> type[Experiment]:
         """Load the first Experiment subclass found in the given .py file."""
+        if not Path(path).is_file():
+            raise ImportError(f"Cannot load experiment from {path!r}")
         spec = importlib.util.spec_from_file_location("_experiment_module", path)
         if spec is None or spec.loader is None:
             raise ImportError(f"Cannot load experiment from {path!r}")
