@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
 
     async def _run_loop(self, experiment: Experiment, shots: int) -> None:
         try:
+            await experiment.connect(self._session.client)
             for i in range(shots):
                 frame = await experiment.shot(Context(shot_idx=i))
                 self._run_controls.on_shot_complete(i, frame)
