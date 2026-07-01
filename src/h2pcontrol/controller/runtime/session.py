@@ -1,16 +1,8 @@
-import asyncio
 import importlib.util
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
 
-import grpc
-import grpc.aio
-from h2pcontrol.manager.v1.manager_pb2 import ListRequest
-from h2pcontrol.manager.v1.manager_pb2_grpc import ManagerServiceStub
-
-if TYPE_CHECKING:
-    from h2pcontrol.manager.v1.manager_pb2_grpc import ManagerServiceAsyncStub
+from h2pcontrol.sdk.client import Client
 
 from ..framework.experiment import Experiment
 
@@ -18,8 +10,7 @@ from ..framework.experiment import Experiment
 class Session:
     def __init__(self, manager_address: str = "localhost:50051"):
         self._address = manager_address
-        self._stop_event = asyncio.Event()
-        self._manager_channel: grpc.aio.Channel | None = None
+        self._client = Client(manager_address)
 
     @property
     def manager_address(self) -> str:
@@ -28,7 +19,11 @@ class Session:
     @manager_address.setter
     def manager_address(self, value: str) -> None:
         self._address = value
-        self._manager_channel = None
+        self._client = Client(value)
+
+    @property
+    def client(self) -> Client:
+        return self._client
 
     def load_experiment(self, path: str) -> type[Experiment]:
         """Load the first Experiment subclass found in the given .py file."""
@@ -51,12 +46,9 @@ class Session:
         return candidates[0]
 
     async def ping_manager(self) -> bool:
-        """:return True if the manager response within two seconds, else false"""
-        channel = self._manager_channel or grpc.aio.insecure_channel(self._address)
-        self._manager_channel = channel
+        """:return True if the manager responds, else False."""
         try:
-            stub = cast("ManagerServiceAsyncStub", ManagerServiceStub(channel))
-            await stub.List(ListRequest(), timeout=2.0)
+            await self._client._ensure_connected()
             return True
         except Exception:
             return False
