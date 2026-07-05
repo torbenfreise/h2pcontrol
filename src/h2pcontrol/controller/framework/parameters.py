@@ -1,21 +1,48 @@
 from dataclasses import dataclass, field
-from typing import Any, TypeVar
-
-T = TypeVar("T")
+from typing import Any, overload
 
 
 @dataclass
-class ParamSpec:
-    default: Any
+class ParamSpec[T]:
+    """Typed experiment parameter, implemented as a data descriptor.
+
+    Class access (``MyExperiment.voltage``) returns the spec itself, enabling
+    typed references (e.g. ``Axis(MyExperiment.voltage, ...)``).
+    Instance access (``self.voltage``) returns the current value, falling back
+    to ``default``.
+    """
+
+    default: T
     low: Any = None
     high: Any = None
     unit: str | None = None
     description: str | None = None
+    choices: tuple[Any, ...] | None = None
 
     # Inferred from attribute declaration
-    choices: tuple[Any, ...] | None = field(default=None, init=False)
     dtype: type | None = field(default=None, init=False)
     name: str | None = field(default=None, init=False)
+
+    # descriptor interface
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
+
+    @overload
+    def __get__(self, obj: None, objtype: type | None = None) -> "ParamSpec[T]": ...
+
+    @overload
+    def __get__(self, obj: object, objtype: type | None = None) -> T: ...
+
+    def __get__(self, obj: object | None, objtype: type | None = None) -> "ParamSpec[T] | T":
+        if obj is None:
+            return self  # class-level access: the spec itself
+        assert self.name is not None, "ParamSpec not attached to a class"
+        return obj.__dict__.get(self.name, self.default)
+
+    def __set__(self, obj: object, value: Any) -> None:
+        assert self.name is not None, "ParamSpec not attached to a class"
+        obj.__dict__[self.name] = self.validate(value)
 
     def validate(self, value: Any) -> Any:
         if self.dtype is not None:
@@ -45,11 +72,22 @@ def param[T](
     max: T | None = None,
     unit: str | None = None,
     description: str | None = None,
-) -> T:  # type lie: we actually return ParamSpec
-    return ParamSpec(  # type: ignore[return-value]
+    choices: tuple[T, ...] | None = None,
+) -> ParamSpec[T]:
+    """Declare an experiment parameter.
+
+    Examples::
+
+        voltage = param(3.3, min=0.0, max=5.0, unit="V")
+        mode = param("fast", choices=("fast", "slow"))
+
+    The value type is inferred from ``default``.
+    """
+    return ParamSpec(
         default=default,
         low=min,
         high=max,
         unit=unit,
         description=description,
+        choices=choices,
     )

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..framework.experiment import Context, Experiment
+from ..framework.scan import Scan
 from ..runtime.session import Session
 from .experiment_panel import ExperimentPanel, _ParamApplyError
 from .run_controls import RunControls
@@ -112,13 +113,14 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             QMessageBox.critical(self, "Load Error", str(exc))
 
-    def _on_run(self, shots: int) -> None:
+    def _on_run(self, repeats: int) -> None:
         try:
             experiment = self._experiment_panel.initialise_experiment()
         except _ParamApplyError as exc:
             QMessageBox.warning(self, "Invalid Parameters", str(exc))
             return
-        self._run_task = asyncio.ensure_future(self._run_loop(experiment, shots))
+        scan = self._experiment_panel.get_scan()
+        self._run_task = asyncio.ensure_future(self._run_loop(experiment, repeats, scan))
         self._bg_tasks.add(self._run_task)
         self._run_task.add_done_callback(self._bg_tasks.discard)
         self._run_controls.set_running(True)
@@ -127,12 +129,24 @@ class MainWindow(QMainWindow):
         if self._run_task and not self._run_task.done():
             self._run_task.cancel()
 
-    async def _run_loop(self, experiment: Experiment, shots: int) -> None:
+    async def _run_loop(
+        self, experiment: Experiment, repeats: int, scan: Scan | None = None
+    ) -> None:
         try:
+            if scan is not None:
+                scan.validate_for(type(experiment))
             await experiment.connect(self._session.client)
-            for i in range(shots):
-                frame = await experiment.shot(Context(shot_idx=i))
-                self._run_controls.on_shot_complete(i, frame)
+            points = list(scan.points()) if scan else [{}]
+            total = len(points) * repeats
+            shot_idx = 0
+            for point in points:
+                for param_name, value in point.items():
+                    setattr(experiment, param_name, value)
+                for _ in range(repeats):
+                    ctx = Context(shot_idx=shot_idx, total_shots=total)
+                    frame = await experiment.shot(ctx)
+                    self._run_controls.on_shot_complete(shot_idx, total, frame)
+                    shot_idx += 1
         except asyncio.CancelledError:
             self._run_controls.log("Stopped")
         except Exception as exc:

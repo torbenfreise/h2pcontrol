@@ -58,6 +58,9 @@ h2pcontrol = "h2pcontrol.controller.app:main"
 where = ["src"]
 namespaces = true
 
+[tool.pyright]
+pythonVersion = "3.12"
+
 [tool.uv]
 override-dependencies = ["protobuf>=7.34.1"]
 

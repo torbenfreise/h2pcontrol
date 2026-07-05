@@ -25,12 +25,12 @@ class RunControls(QWidget):
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
 
-        self._shots_label = QLabel("Shots:")
-        hl.addWidget(self._shots_label)
-        self._shots = QSpinBox()
-        self._shots.setRange(1, 100_000)
-        self._shots.setValue(10)
-        hl.addWidget(self._shots)
+        self._repeats_label = QLabel("Repeats:")
+        hl.addWidget(self._repeats_label)
+        self._repeats = QSpinBox()
+        self._repeats.setRange(1, 100_000)
+        self._repeats.setValue(10)
+        hl.addWidget(self._repeats)
 
         self._run_btn = QPushButton("Run")
         self._run_btn.clicked.connect(self._on_run)
@@ -40,6 +40,9 @@ class RunControls(QWidget):
         self._stop_btn.setEnabled(False)
         self._stop_btn.clicked.connect(self.stop_requested)
         hl.addWidget(self._stop_btn)
+
+        self._progress = QLabel()
+        hl.addWidget(self._progress)
 
         hl.addStretch()
         layout.addWidget(row)
@@ -54,13 +57,17 @@ class RunControls(QWidget):
 
     def _on_run(self) -> None:
         self._log.clear()
-        self.run_requested.emit(self._shots.value())
+        self.run_requested.emit(self._repeats.value())
 
     def set_running(self, running: bool) -> None:
         self._run_btn.setEnabled(not running)
         self._stop_btn.setEnabled(running)
+        if not running:
+            self._progress.clear()
 
-    def on_shot_complete(self, idx: int, frame: pd.DataFrame) -> None:
+    def on_shot_complete(self, idx: int, total: int, frame: pd.DataFrame) -> None:
+        self._progress.setText(f"Shot {idx + 1}/{total}")
+
         def fmt_group(group: str) -> str:
             sub = pd.DataFrame(frame[group])
             pairs = "  ".join(
