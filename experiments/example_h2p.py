@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 class ExampleExperiment(Experiment):
     name = "Example h2pcontrol"
-    sender_name: str = param("Torben")
+    sender_name = param("Torben")
     example: "ExampleServiceAsyncStub" = service_stub("example-service", ExampleServiceStub)
 
     async def shot(self, ctx: Context) -> pd.DataFrame:

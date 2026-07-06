@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, ClassVar, Literal, get_args, get_origin
+from typing import Any, ClassVar
 
 import pandas as pd
 
@@ -11,6 +11,7 @@ from .stubs import StubSpec
 @dataclass
 class Context:
     shot_idx: int
+    total_shots: int = 1
 
 
 class Experiment(ABC):
@@ -26,29 +27,16 @@ class Experiment(ABC):
 
     @staticmethod
     def _collect_parameters(experiment_cls) -> None:
-        """Collects param() declarations and replace
-        attributes with default value"""
-        # merge annotations up the MRO so subclasses inherit base params
-        annotations: dict[str, Any] = {}
-        for klass in reversed(experiment_cls.__mro__):
-            annotations.update(getattr(klass, "__annotations__", {}))
-
+        """Collects param() declarations. The ParamSpec stays on the class as a
+        data descriptor: class access yields the spec, instance access the value."""
         inherited = dict(getattr(experiment_cls, "_parameters", {}))
         for name, val in list(experiment_cls.__dict__.items()):
             if not isinstance(val, ParamSpec):
                 continue
-            # set name
             val.name = name
-
-            # set dtype from annotation
-            ann = annotations.get(name)
-            if get_origin(ann) is Literal:
-                val.choices = get_args(ann)
-                val.dtype = type(val.default) if val.default is not None else None
-            elif isinstance(ann, type):
-                val.dtype = ann
+            if val.dtype is None and val.default is not None:
+                val.dtype = type(val.default)
             inherited[name] = val
-            setattr(experiment_cls, name, val.default)  # replace  attribute with default value
 
         experiment_cls._parameters = inherited
 
@@ -85,12 +73,6 @@ class Experiment(ABC):
                 return pd.concat([result, parameters], axis=1)
 
             experiment_cls.shot = wrapped_shot
-
-    def __setattr__(self, name, value):
-        spec = type(self)._parameters.get(name)
-        if spec is not None:
-            value = spec.validate(value)
-        super().__setattr__(name, value)
 
     async def connect(self, client: Any) -> None:
         """Called once before running the experiment to connect to all required devices."""

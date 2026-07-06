@@ -29,6 +29,13 @@ def test_param_returns_paramspec_with_defaults():
     assert p.description == "supply voltage"
 
 
+def test_param_choices_kwarg():
+    p = param("fast", choices=("fast", "slow"))
+    assert p.choices == ("fast", "slow")
+    with pytest.raises(ValueError, match="not in"):
+        p.validate("medium")
+
+
 # ---------------------------------------------------------------------------
 # validate type coercion
 # ---------------------------------------------------------------------------

@@ -1,15 +1,13 @@
-from typing import Literal
-
-import pytest
 import pandas as pd
+import pytest
 
-from h2pcontrol.controller.framework.experiment import Experiment, Context
-from h2pcontrol.controller.framework.parameters import param
+from h2pcontrol.controller.framework.experiment import Context, Experiment
+from h2pcontrol.controller.framework.parameters import ParamSpec, param
 
 
 class SimpleExperiment(Experiment):
-    voltage: float = param(3.3, min=0.0, max=5.0, unit="V")
-    count: int = param(10, min=1, max=100)
+    voltage = param(3.3, min=0.0, max=5.0, unit="V")
+    count = param(10, min=1, max=100)
 
     async def shot(self, ctx: "Context") -> pd.DataFrame:
         return pd.DataFrame({"reading": [1.0, 2.0]})
@@ -25,14 +23,17 @@ def test_parameters_registered():
     assert "count" in SimpleExperiment._parameters
 
 
-def test_dtype_inferred_from_annotation():
+def test_dtype_inferred_from_default():
     assert SimpleExperiment._parameters["voltage"].dtype is float
     assert SimpleExperiment._parameters["count"].dtype is int
 
 
-def test_class_attribute_set_to_default():
-    assert SimpleExperiment.voltage == 3.3
-    assert SimpleExperiment.count == 10
+def test_class_access_returns_spec():
+    # descriptor protocol: class access yields the ParamSpec (typed axis refs)
+    assert isinstance(SimpleExperiment.voltage, ParamSpec)
+    assert SimpleExperiment.voltage.default == 3.3
+    assert SimpleExperiment.voltage.name == "voltage"
+    assert SimpleExperiment.count.default == 10
 
 
 def test_instance_has_default():
@@ -40,8 +41,14 @@ def test_instance_has_default():
     assert exp.voltage == 3.3
     assert exp.count == 10
 
+
+def test_instance_value_does_not_leak_between_instances():
+    a, b = SimpleExperiment(), SimpleExperiment()
+    a.voltage = 1.5
+    assert b.voltage == 3.3
+
 # ---------------------------------------------------------------------------
-# __setattr__ validation
+# descriptor __set__ validation
 # ---------------------------------------------------------------------------
 
 def test_setattr_coerces_type():
