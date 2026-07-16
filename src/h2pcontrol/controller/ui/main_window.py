@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 from ..framework.experiment import Context, Experiment
 from ..framework.scan import Scan
 from ..runtime.session import Session
+from ..runtime.store import RunStore
 from .experiment_panel import ExperimentPanel, _ParamApplyError
 from .run_controls import RunControls
 from .settings_dialog import SettingsDialog
@@ -31,6 +32,7 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("h2pcontrol", "controller")
         address = self._settings.value("manager_address", "localhost:50051")
         self._session = Session(manager_address=str(address))
+        self._results_root = str(self._settings.value("results_root", "results"))
 
         self._build_menu()
         self._build_central()
@@ -132,10 +134,15 @@ class MainWindow(QMainWindow):
     async def _run_loop(
         self, experiment: Experiment, repeats: int, scan: Scan | None = None
     ) -> None:
+        store: RunStore | None = None
         try:
             if scan is not None:
                 scan.validate_for(type(experiment))
             await experiment.connect(self._session.client)
+            store = RunStore.create(
+                self._results_root, experiment.name or type(experiment).__name__
+            )
+            self._run_controls.log(f"Run {store.run_number:04d} → {store.path}")
             points = list(scan.points()) if scan else [{}]
             total = len(points) * repeats
             shot_idx = 0
@@ -145,6 +152,7 @@ class MainWindow(QMainWindow):
                 for _ in range(repeats):
                     ctx = Context(shot_idx=shot_idx, total_shots=total)
                     frame = await experiment.shot(ctx)
+                    store.save_shot(shot_idx, frame)
                     self._run_controls.on_shot_complete(shot_idx, total, frame)
                     shot_idx += 1
         except asyncio.CancelledError:
@@ -153,13 +161,17 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             self._run_controls.log(f"Error: {exc}")
         finally:
+            if store is not None:
+                store.close()
             self._run_controls.set_running(False)
             self._run_task = None
 
     def _on_settings(self) -> None:
-        dlg = SettingsDialog(self._session.manager_address, self)
+        dlg = SettingsDialog(self._session.manager_address, self._results_root, self)
         if dlg.exec():
             address = dlg.address()
             self._session.manager_address = address
             self._settings.setValue("manager_address", address)
+            self._results_root = dlg.results_root()
+            self._settings.setValue("results_root", self._results_root)
             self._schedule_ping()
