@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
+
+# IDE / local
+.idea/
+.claude/
+.DS_Store
+CLAUDE.md
+
+# Runtime output — never committed
+results/
+.logs/
