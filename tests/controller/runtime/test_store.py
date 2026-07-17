@@ -123,6 +123,16 @@ class TestSaveShot:
             data = pd.DataFrame(f.root.data[:])
         assert data["reading"].iloc[0] == 1.0
 
+    def test_string_columns(self, tmp_path):
+        store = RunStore.create(tmp_path, "Exp")
+        frame = pd.DataFrame({"value": [1.5], "label": ["hello"]})
+        store.save_shot(0, frame)
+        store.close()
+        with tables.open_file(str(store.path)) as f:
+            data = pd.DataFrame(f.root.data[:])
+        assert data["value"].iloc[0] == 1.5
+        assert data["label"].iloc[0] == b"hello"
+
 
 class TestTraces:
     def test_trace_dtype_preserved(self, tmp_path):

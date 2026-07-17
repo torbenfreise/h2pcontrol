@@ -9,8 +9,8 @@ from h2pcontrol.controller.framework.parameters import param
 
 class ExampleExperiment(Experiment):
     name = "Example sine"
-    frequency = param(1.0, min=0.01, max=100.0, unit="Hz")
-    amplitude = param(1.0, min=0.0, max=100.0, unit="V")
+    frequency = param(1.0, min=0.01, max=100.0, unit="Hz", group="wave")
+    amplitude = param(1.0, min=0.0, max=100.0, unit="V", group="wave")
     delay = param(0.1, min=0.0, max=5.0, unit="s")
     waveform = param("sine", choices=("sine", "square"))
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -87,7 +87,11 @@ class RunStore:
         if self._table is None:
             desc = {"shot_idx": tables.Col.from_dtype(np.dtype(np.int64))}
             for col in flat.columns:
-                desc[col] = tables.Col.from_dtype(cast(np.dtype[Any], flat[col].dtype))
+                np_dtype = flat[col].to_numpy().dtype
+                if np_dtype.kind in ("O", "U", "S"):
+                    desc[col] = tables.Col.from_dtype(np.dtype("S256"))
+                else:
+                    desc[col] = tables.Col.from_dtype(np_dtype)
             self._table = self._h5.create_table("/", "data", desc)
 
         row = self._table.row
