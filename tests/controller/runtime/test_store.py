@@ -71,8 +71,8 @@ class TestSaveShot:
         store.close()
         with tables.open_file(str(store.path)) as f:
             data = pd.DataFrame(f.root.data[:])
-        assert data["result_mean_v"].iloc[0] == 1.5
-        assert data["params_voltage"].iloc[0] == 3.3
+            assert data["result_mean_v"].iloc[0] == 1.5
+            assert data["params_voltage"].iloc[0] == 3.3
 
     def test_multiple_shots_appended(self, tmp_path):
         store = RunStore.create(tmp_path, "Exp")
@@ -82,8 +82,8 @@ class TestSaveShot:
         store.close()
         with tables.open_file(str(store.path)) as f:
             data = pd.DataFrame(f.root.data[:])
-        assert len(data) == 3
-        assert list(data["shot_idx"]) == [0, 1, 2]
+            assert len(data) == 3
+            assert list(data["shot_idx"]) == [0, 1, 2]
 
     def test_trace_stored_as_dataset(self, tmp_path):
         store = RunStore.create(tmp_path, "Exp")
@@ -95,8 +95,8 @@ class TestSaveShot:
             data = pd.DataFrame(f.root.data[:])
             assert "result_trace" not in data.columns
             stored = f.root.traces.shot_00000.result_trace.read()
-        assert stored.shape == (500,)
-        assert np.allclose(stored, trace)
+            assert stored.shape == (500,)
+            assert np.allclose(stored, trace)
 
     def test_metadata_attrs(self, tmp_path):
         store = RunStore.create(tmp_path, "Exp")
@@ -121,7 +121,7 @@ class TestSaveShot:
         store.close()
         with tables.open_file(str(store.path)) as f:
             data = pd.DataFrame(f.root.data[:])
-        assert data["reading"].iloc[0] == 1.0
+            assert data["reading"].iloc[0] == 1.0
 
     def test_string_columns(self, tmp_path):
         store = RunStore.create(tmp_path, "Exp")
@@ -130,8 +130,8 @@ class TestSaveShot:
         store.close()
         with tables.open_file(str(store.path)) as f:
             data = pd.DataFrame(f.root.data[:])
-        assert data["value"].iloc[0] == 1.5
-        assert data["label"].iloc[0] == b"hello"
+            assert data["value"].iloc[0] == 1.5
+            assert data["label"].iloc[0] == b"hello"
 
 
 class TestTraces:
@@ -161,8 +161,8 @@ class TestTraces:
             assert np.allclose(f.root.traces.shot_00000.result_trace.read(), samples)
             assert np.allclose(f.root.traces.shot_00000.result_times_s.read(), times)
             data = pd.DataFrame(f.root.data[:])
-        assert data["result_mean_v"].iloc[0] == 0.5
-        assert data["params_voltage"].iloc[0] == 3.3
+            assert data["result_mean_v"].iloc[0] == 0.5
+            assert data["params_voltage"].iloc[0] == 3.3
 
     def test_multichannel_2d_trace(self, tmp_path):
         trace = np.random.default_rng(0).normal(size=(4, 250)).astype(np.float32)
@@ -171,8 +171,8 @@ class TestTraces:
         store.close()
         with tables.open_file(str(store.path)) as f:
             stored = f.root.traces.shot_00000.result_trace.read()
-        assert stored.shape == (4, 250)
-        assert np.array_equal(stored, trace)
+            assert stored.shape == (4, 250)
+            assert np.array_equal(stored, trace)
 
     def test_large_trace_round_trip(self, tmp_path):
         trace = np.random.default_rng(1).normal(size=1_000_000).astype(np.float32)
@@ -181,7 +181,7 @@ class TestTraces:
         store.close()
         with tables.open_file(str(store.path)) as f:
             stored = f.root.traces.shot_00000.result_trace.read()
-        assert np.array_equal(stored, trace)
+            assert np.array_equal(stored, trace)
 
     def test_traces_per_shot(self, tmp_path):
         """Each shot's traces are stored under their own group."""
@@ -221,5 +221,5 @@ class TestTraces:
             assert data["result_mean_v"].iloc[0] == 2.0
             assert "result_trace" not in data.columns
             stored = f.root.traces.shot_00000.result_trace.read()
-        assert stored.shape == (500,)
-        assert np.all(stored == np.float32(2.0))
+            assert stored.shape == (500,)
+            assert np.all(stored == np.float32(2.0))

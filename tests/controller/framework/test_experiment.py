@@ -47,9 +47,11 @@ def test_instance_value_does_not_leak_between_instances():
     a.voltage = 1.5
     assert b.voltage == 3.3
 
+
 # ---------------------------------------------------------------------------
 # descriptor __set__ validation
 # ---------------------------------------------------------------------------
+
 
 def test_setattr_coerces_type():
     exp = SimpleExperiment()
@@ -67,6 +69,7 @@ def test_setattr_rejects_out_of_bounds():
 # ---------------------------------------------------------------------------
 # Shot wrapping
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_shot_wrapping_adds_params_and_preserves_results():

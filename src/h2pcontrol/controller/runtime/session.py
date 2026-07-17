@@ -1,3 +1,4 @@
+import contextlib
 import importlib.util
 import sys
 from pathlib import Path
@@ -16,10 +17,15 @@ class Session:
     def manager_address(self) -> str:
         return self._address
 
-    @manager_address.setter
-    def manager_address(self, value: str) -> None:
+    async def set_manager_address(self, value: str) -> None:
+        """Reconnect to a different manager, closing the previous client."""
+        if value == self._address:
+            return
+        old = self._client
         self._address = value
         self._client = Client(value)
+        with contextlib.suppress(AttributeError):  # TODO(sdk>=0.2.8): remove suppress
+            await old.close()
 
     @property
     def client(self) -> Client:

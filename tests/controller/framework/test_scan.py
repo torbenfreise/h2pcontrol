@@ -162,7 +162,7 @@ class TestScanGroups:
             Axis(GroupedExperiment.frequency, start=1, stop=10, steps=2),
         )
         points = list(scan.points())
-        assert len(points) == 6  # 3 zipped × 2 ungrouped
+        assert len(points) == 6  # 3 zipped x 2 ungrouped
         assert len(scan) == 6
 
     def test_mismatched_group_lengths_raises(self):

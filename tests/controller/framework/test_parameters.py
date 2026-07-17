@@ -5,9 +5,15 @@ import pytest
 from h2pcontrol.controller.framework.parameters import ParamSpec, param
 
 
-def _spec(default: Any, *, dtype: type | None = None, choices: tuple | None = None,
-          low: Any = None, high: Any = None) -> ParamSpec:
-    """Helper to build a ParamSpec with non-init fields set, since usually the experiment class does this for us."""
+def _spec(
+    default: Any,
+    *,
+    dtype: type | None = None,
+    choices: tuple | None = None,
+    low: Any = None,
+    high: Any = None,
+) -> ParamSpec:
+    """Build a ParamSpec with non-init fields set (the experiment class normally does this)."""
     s = ParamSpec(default=default, low=low, high=high)
     s.dtype = dtype
     s.choices = choices

@@ -19,7 +19,9 @@ def _write_experiment(tmp_path: Path, source: str) -> Path:
 
 
 def test_loads_experiment_subclass(session, tmp_path):
-    path = _write_experiment(tmp_path, """\
+    path = _write_experiment(
+        tmp_path,
+        """\
         import pandas as pd
         from h2pcontrol.controller.framework.experiment import Experiment, Context
         from h2pcontrol.controller.framework.parameters import param
@@ -28,7 +30,8 @@ def test_loads_experiment_subclass(session, tmp_path):
             voltage: float = param(1.0)
             async def shot(self, ctx: Context) -> pd.DataFrame:
                 return pd.DataFrame()
-    """)
+    """,
+    )
     cls = session.load_experiment(str(path))
     assert issubclass(cls, Experiment)
     assert cls.__name__ == "MyExperiment"
@@ -47,7 +50,9 @@ def test_raises_value_error_when_no_subclass(session, tmp_path):
 
 
 def test_reloads_same_path(session, tmp_path):
-    path = _write_experiment(tmp_path, """\
+    path = _write_experiment(
+        tmp_path,
+        """\
         import pandas as pd
         from h2pcontrol.controller.framework.experiment import Experiment, Context
         from h2pcontrol.controller.framework.parameters import param
@@ -56,11 +61,13 @@ def test_reloads_same_path(session, tmp_path):
             a: float = param(1.0)
             async def shot(self, ctx: Context) -> pd.DataFrame:
                 return pd.DataFrame()
-    """)
+    """,
+    )
     cls1 = session.load_experiment(str(path))
     assert cls1.__name__ == "First"
 
-    path.write_text(textwrap.dedent("""\
+    path.write_text(
+        textwrap.dedent("""\
         import pandas as pd
         from h2pcontrol.controller.framework.experiment import Experiment, Context
         from h2pcontrol.controller.framework.parameters import param
@@ -69,6 +76,7 @@ def test_reloads_same_path(session, tmp_path):
             b: float = param(2.0)
             async def shot(self, ctx: Context) -> pd.DataFrame:
                 return pd.DataFrame()
-    """))
+    """)
+    )
     cls2 = session.load_experiment(str(path))
     assert cls2.__name__ == "Second"
