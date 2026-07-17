@@ -18,6 +18,7 @@ class ParamSpec[T]:
     unit: str | None = None
     description: str | None = None
     choices: tuple[Any, ...] | None = None
+    group: str | None = None
 
     # Inferred from attribute declaration
     dtype: type | None = field(default=None, init=False)
@@ -73,6 +74,7 @@ def param[T](
     unit: str | None = None,
     description: str | None = None,
     choices: tuple[T, ...] | None = None,
+    group: str | None = None,
 ) -> ParamSpec[T]:
     """Declare an experiment parameter.
 
@@ -90,4 +92,5 @@ def param[T](
         unit=unit,
         description=description,
         choices=choices,
+        group=group,
     )

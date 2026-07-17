@@ -15,6 +15,15 @@ class ScanExperiment(Experiment):
         return pd.DataFrame({"reading": [1.0]})
 
 
+class GroupedExperiment(Experiment):
+    voltage = param(0.0, min=0.0, max=10.0, group="ramp")
+    current = param(0.0, min=0.0, max=1.0, group="ramp")
+    frequency = param(1.0, min=0.0, max=100.0)
+
+    async def shot(self, ctx) -> pd.DataFrame:
+        return pd.DataFrame({"reading": [1.0]})
+
+
 class OtherExperiment(Experiment):
     voltage = param(1.0)  # same name, different experiment
 
@@ -52,6 +61,33 @@ class TestAxis:
     def test_partial_range_raises(self):
         with pytest.raises(ValueError, match="start, stop, and steps"):
             Axis(ScanExperiment.voltage, start=0.0)
+
+    def test_centered_values(self):
+        ax = Axis.centered(ScanExperiment.voltage, center=5.0, span=4.0, steps=5)
+        vals = list(ax.values)
+        assert vals == pytest.approx([3.0, 4.0, 5.0, 6.0, 7.0])
+
+    def test_centered_is_not_discrete(self):
+        assert not Axis.centered(ScanExperiment.voltage, 5.0, 4.0, 5).is_discrete
+
+    def test_from_list_values(self):
+        ax = Axis.from_list(ScanExperiment.voltage, [1.0, 3.0, 7.0])
+        assert list(ax.values) == [1.0, 3.0, 7.0]
+
+    def test_from_list_len(self):
+        ax = Axis.from_list(ScanExperiment.voltage, [1.0, 2.0])
+        assert len(ax) == 2
+
+    def test_from_list_is_not_discrete(self):
+        assert not Axis.from_list(ScanExperiment.voltage, [1.0]).is_discrete
+
+    def test_from_list_empty_raises(self):
+        with pytest.raises(ValueError, match="empty"):
+            Axis.from_list(ScanExperiment.voltage, [])
+
+    def test_explicit_values_with_range_raises(self):
+        with pytest.raises(ValueError, match="Cannot combine"):
+            Axis(ScanExperiment.voltage, start=0, stop=1, steps=2, explicit_values=(1.0,))
 
 
 class TestScan:
@@ -106,6 +142,53 @@ class TestScan:
         assert points[1] == {"voltage": pytest.approx(0.0), "frequency": pytest.approx(20.0)}
         assert points[2] == {"voltage": pytest.approx(1.0), "frequency": pytest.approx(10.0)}
         assert points[3] == {"voltage": pytest.approx(1.0), "frequency": pytest.approx(20.0)}
+
+
+class TestScanGroups:
+    def test_grouped_axes_are_zipped(self):
+        scan = Scan(
+            Axis(GroupedExperiment.voltage, start=0, stop=10, steps=3),
+            Axis(GroupedExperiment.current, start=0, stop=1, steps=3),
+        )
+        points = list(scan.points())
+        assert len(points) == 3
+        assert points[0] == {"voltage": pytest.approx(0.0), "current": pytest.approx(0.0)}
+        assert points[2] == {"voltage": pytest.approx(10.0), "current": pytest.approx(1.0)}
+
+    def test_grouped_and_ungrouped_crossed(self):
+        scan = Scan(
+            Axis(GroupedExperiment.voltage, start=0, stop=10, steps=3),
+            Axis(GroupedExperiment.current, start=0, stop=1, steps=3),
+            Axis(GroupedExperiment.frequency, start=1, stop=10, steps=2),
+        )
+        points = list(scan.points())
+        assert len(points) == 6  # 3 zipped × 2 ungrouped
+        assert len(scan) == 6
+
+    def test_mismatched_group_lengths_raises(self):
+        scan = Scan(
+            Axis(GroupedExperiment.voltage, start=0, stop=10, steps=3),
+            Axis(GroupedExperiment.current, start=0, stop=1, steps=5),
+        )
+        with pytest.raises(ValueError, match="mismatched lengths"):
+            list(scan.points())
+
+    def test_mismatched_group_len_raises(self):
+        scan = Scan(
+            Axis(GroupedExperiment.voltage, start=0, stop=10, steps=3),
+            Axis(GroupedExperiment.current, start=0, stop=1, steps=5),
+        )
+        with pytest.raises(ValueError, match="mismatched lengths"):
+            len(scan)
+
+    def test_ungrouped_axes_still_crossed(self):
+        """Axes without a group are crossed."""
+        scan = Scan(
+            Axis(ScanExperiment.voltage, start=0, stop=1, steps=2),
+            Axis(ScanExperiment.frequency, start=10, stop=20, steps=2),
+        )
+        points = list(scan.points())
+        assert len(points) == 4
 
 
 class TestScanValidation:
