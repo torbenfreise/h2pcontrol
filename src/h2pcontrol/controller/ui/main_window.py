@@ -170,8 +170,11 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self._session.manager_address, self._results_root, self)
         if dlg.exec():
             address = dlg.address()
-            self._session.manager_address = address
             self._settings.setValue("manager_address", address)
             self._results_root = dlg.results_root()
             self._settings.setValue("results_root", self._results_root)
-            self._schedule_ping()
+            self._spawn(self._apply_address(address))
+
+    async def _apply_address(self, address: str) -> None:
+        await self._session.set_manager_address(address)
+        await self._ping()

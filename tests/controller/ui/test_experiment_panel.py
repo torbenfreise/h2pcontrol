@@ -3,33 +3,32 @@ import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.scan import Axis
 from h2pcontrol.controller.ui.experiment_panel import ExperimentPanel, _ParamApplyError
 
 
 class Exp(Experiment):
-    voltage: float = param(3.3, min=0.0, max=5.0, unit="V")
-    count: int = param(10, min=1, max=100)
+    voltage = param(3.3, min=0.0, max=5.0, unit="V")
+    count = param(10, min=1, max=100)
 
     async def shot(self, ctx: Context) -> pd.DataFrame:
         return pd.DataFrame()
 
 
 class GroupedExp(Experiment):
-    voltage: float = param(0.0, min=0.0, max=10.0, group="ramp")
-    current: float = param(0.0, min=0.0, max=1.0, group="ramp")
-    frequency: float = param(1.0, min=0.0, max=100.0)
+    voltage = param(0.0, min=0.0, max=10.0, group="ramp")
+    current = param(0.0, min=0.0, max=1.0, group="ramp")
+    frequency = param(1.0, min=0.0, max=100.0)
 
     async def shot(self, ctx: Context) -> pd.DataFrame:
         return pd.DataFrame()
 
 
 class MultiGroupExp(Experiment):
-    voltage: float = param(0.0, min=0.0, max=10.0, group="ramp")
-    current: float = param(0.0, min=0.0, max=1.0, group="ramp")
-    freq: float = param(1.0, min=0.0, max=100.0, group="rf")
-    power: float = param(0.0, min=-10.0, max=10.0, group="rf")
-    gain: float = param(1.0, min=0.0, max=10.0)
+    voltage = param(0.0, min=0.0, max=10.0, group="ramp")
+    current = param(0.0, min=0.0, max=1.0, group="ramp")
+    freq = param(1.0, min=0.0, max=100.0, group="rf")
+    power = param(0.0, min=-10.0, max=10.0, group="rf")
+    gain = param(1.0, min=0.0, max=10.0)
 
     async def shot(self, ctx: Context) -> pd.DataFrame:
         return pd.DataFrame()

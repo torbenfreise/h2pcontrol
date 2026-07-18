@@ -18,18 +18,13 @@ dependencies = [
     "beyer-labs-h2pcontrol-community-nipunn1313-mypy>=5.1.0.dev0,<6",
     "beyer-labs-h2pcontrol-community-nipunn1313-mypy-grpc>=5.1.0.dev0,<6",
     "protobuf>=7.34.1",
-    "pint",
     "pyqtgraph",
     "numpy",
-    "PyYAML",
-    "pyserial",
     "h2pcontrol-sdk",
     "pyside6>=6.11.1",
     "qasync>=0.27.1",
     "pandas>=2.0",
     "tables>=3.11.1",
-    "pandas-stubs~=3.0.3",
-    "matplotlib>=3.11.0",
 ]
 
 [dependency-groups]
@@ -39,6 +34,7 @@ dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
     "pytest-qt>=4.0.0",
+    "pandas-stubs~=3.0.3",
 ]
 
 [tool.ruff]

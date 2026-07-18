@@ -15,9 +15,9 @@ and are a pre-condition for merging.
 To run the same checks locally:
 
 ```bash
-uv run ruff format src/ # format the project in-place
-uv run ruff check --fix src/ # Run linters and auto-fix issues
-uv run pyright src/ # Type-check   
+uv run ruff format src/ tests/ examples/       # format in-place
+uv run ruff check --fix src/ tests/ examples/  # lint and auto-fix
+uv run pyright src/ tests/                     # type-check
 ```
 
 These checks also run automatically on every pull request and pushes to main via
@@ -32,6 +32,8 @@ uv run pytest
 ```
 
 The tests also run on every pull request and are a pre-condition for merging.
+
+GUI tests require a display. In headless environments (CI), set `QT_QPA_PLATFORM=offscreen`.
 
 ## Proto dependencies
 

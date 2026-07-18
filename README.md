@@ -1,3 +1,25 @@
 # h2pcontrol
 
-This repository consists of the h2pcontrol experimental control software
+Experiment control GUI and framework for the h2pcontrol ecosystem. Works together
+with the [h2pmanager](https://github.com/torbenfreise/h2pcontrol-manager) registry,
+the [h2pcontrol-sdk](https://github.com/torbenfreise/h2pcontrol-sdk) client/server SDK,
+and device service implementations (MCC DAQ, Picoscope, PulseBlaster, etc.).
+
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- A running `h2pmanager` instance for device communication
+
+## Quickstart
+
+```bash
+uv sync          # install dependencies
+uv run h2pcontrol  # launch the GUI
+```
+
+The `examples/` directory contains demonstration experiments that can be opened
+via File -> Open in the GUI.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, linting, and testing instructions.
