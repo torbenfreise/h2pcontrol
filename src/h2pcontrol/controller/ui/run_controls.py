@@ -1,83 +1,74 @@
-import pandas as pd
+"""Run settings and control bar."""
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
 
 class RunControls(QWidget):
-    run_requested = Signal(int)
-    stop_requested = Signal()
+    schedule_requested = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        layout = QVBoxLayout(self)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        row = QWidget()
-        hl = QHBoxLayout(row)
-        hl.setContentsMargins(0, 0, 0, 0)
-
-        self._repeats_label = QLabel("Repeats:")
-        hl.addWidget(self._repeats_label)
+        # Repeats per scan point — only shown when a scan is configured
+        self._repeats_label = QLabel("Repeats per point:")
+        layout.addWidget(self._repeats_label)
         self._repeats = QSpinBox()
         self._repeats.setRange(1, 100_000)
-        self._repeats.setValue(10)
-        hl.addWidget(self._repeats)
+        self._repeats.setValue(1)
+        self._repeats.setToolTip("Shots taken at each scan point")
+        layout.addWidget(self._repeats)
 
-        self._run_btn = QPushButton("Run")
-        self._run_btn.clicked.connect(self._on_run)
-        hl.addWidget(self._run_btn)
+        # Total repeats of the experiment
+        self._count_label = QLabel("Repeats:")
+        layout.addWidget(self._count_label)
+        self._count = QSpinBox()
+        self._count.setRange(1, 100_000)
+        self._count.setValue(1)
+        self._count.setToolTip("Number of repeats (use ∞ to run until stopped)")
+        layout.addWidget(self._count)
 
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.setEnabled(False)
-        self._stop_btn.clicked.connect(self.stop_requested)
-        hl.addWidget(self._stop_btn)
+        self._inf_check = QCheckBox("∞")
+        self._inf_check.setToolTip("Run until stopped")
+        self._inf_check.toggled.connect(self._count.setDisabled)
+        layout.addWidget(self._inf_check)
 
-        self._progress = QLabel()
-        hl.addWidget(self._progress)
+        self._schedule_btn = QPushButton("Schedule")
+        self._schedule_btn.clicked.connect(self.schedule_requested)
+        layout.addWidget(self._schedule_btn)
 
-        hl.addStretch()
-        layout.addWidget(row)
+        layout.addStretch()
 
-        self._log = QPlainTextEdit()
-        self._log.setReadOnly(True)
-        self._log.setMaximumHeight(120)
-        layout.addWidget(self._log)
+        self.set_scanning(False)
+        self.set_loaded(False)
 
-    def log(self, text: str) -> None:
-        self._log.appendPlainText(text)
+    def run_counts(self) -> tuple[int, int | None]:
+        """Return (repeats_per_point, scan_repeats) for the current mode.
 
-    def _on_run(self) -> None:
-        self._log.clear()
-        self.run_requested.emit(self._repeats.value())
+        ``scan_repeats`` is None when ∞ is checked (run until stopped).
+        """
+        count = None if self._inf_check.isChecked() else self._count.value()
+        if self._scanning:
+            return self._repeats.value(), count
+        return 1, count
 
-    def set_running(self, running: bool) -> None:
-        self._run_btn.setEnabled(not running)
-        self._stop_btn.setEnabled(running)
-        if not running:
-            self._progress.clear()
+    def set_scanning(self, scanning: bool) -> None:
+        """Switch between scan mode and fixed mode."""
+        self._scanning = scanning
+        self._repeats_label.setVisible(scanning)
+        self._repeats.setVisible(scanning)
 
-    def on_shot_complete(self, idx: int, total: int, frame: pd.DataFrame) -> None:
-        self._progress.setText(f"Shot {idx + 1}/{total}")
-
-        def fmt_group(group: str) -> str:
-            sub = pd.DataFrame(frame[group])
-            pairs = "  ".join(
-                f"{col}={sub[col].iloc[0]:.4g}"
-                if pd.api.types.is_numeric_dtype(sub[col])
-                else f"{col}={sub[col].iloc[0]}"
-                for col in sub.columns
-            )
-            return f"[{group}] {pairs}"
-
-        all_groups = set(frame.columns.get_level_values(0).unique())
-        ordered = [g for g in ("params", "result") if g in all_groups]
-        self._log.appendPlainText(f"Shot {idx + 1}:  " + "   ".join(fmt_group(g) for g in ordered))
+    def set_loaded(self, loaded: bool) -> None:
+        """Enable scheduling once an experiment has been loaded."""
+        self._schedule_btn.setEnabled(loaded)
+        self._schedule_btn.setToolTip("" if loaded else "Open an experiment first")

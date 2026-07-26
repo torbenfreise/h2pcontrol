@@ -1,8 +1,10 @@
+import dataclasses
+
 import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.parameters import ParamSpec, param
+from h2pcontrol.controller.framework.parameters import ParameterError, ParamSpec, param
 
 
 class SimpleExperiment(Experiment):
@@ -19,13 +21,13 @@ class SimpleExperiment(Experiment):
 
 
 def test_parameters_registered():
-    assert "voltage" in SimpleExperiment._parameters
-    assert "count" in SimpleExperiment._parameters
+    assert "voltage" in SimpleExperiment.parameters()
+    assert "count" in SimpleExperiment.parameters()
 
 
 def test_dtype_inferred_from_default():
-    assert SimpleExperiment._parameters["voltage"].dtype is float
-    assert SimpleExperiment._parameters["count"].dtype is int
+    assert SimpleExperiment.parameters()["voltage"].dtype is float
+    assert SimpleExperiment.parameters()["count"].dtype is int
 
 
 def test_class_access_returns_spec():
@@ -87,3 +89,69 @@ async def test_shot_wrapping_adds_params_and_preserves_results():
     assert list(df[("result", "reading")]) == [1.0, 2.0]
     assert df[("params", "voltage")].iloc[0] == 3.3
     assert df[("params", "count")].iloc[0] == 10
+
+
+# ---------------------------------------------------------------------------
+# Context
+# ---------------------------------------------------------------------------
+
+
+def test_context_is_frozen():
+    ctx = Context(shot_idx=0, run_id="abc", total_shots=5)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        ctx.shot_idx = 1  # type: ignore[misc]
+
+
+def test_context_defaults():
+    ctx = Context(shot_idx=3)
+    assert ctx.run_id == ""
+    assert ctx.total_shots is None
+
+
+# ---------------------------------------------------------------------------
+# teardown
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_teardown_is_awaitable_noop():
+    exp = SimpleExperiment()
+    result = await exp.teardown()
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# parameters() classmethod
+# ---------------------------------------------------------------------------
+
+
+def test_parameters_returns_readonly_mapping():
+    params = SimpleExperiment.parameters()
+    assert "voltage" in params
+    assert "count" in params
+    with pytest.raises(TypeError):
+        params["voltage"] = None  # type: ignore[index]
+
+
+def test_parameters_includes_inherited():
+    class Child(SimpleExperiment):
+        extra = param(0.0, min=-1.0, max=1.0)
+
+        async def shot(self, ctx: Context) -> pd.DataFrame:
+            return pd.DataFrame({"x": [0.0]})
+
+    child_params = Child.parameters()
+    assert "voltage" in child_params
+    assert "count" in child_params
+    assert "extra" in child_params
+
+
+# ---------------------------------------------------------------------------
+# ParameterError
+# ---------------------------------------------------------------------------
+
+
+def test_parameter_error_is_value_error():
+    assert issubclass(ParameterError, ValueError)
+    exc = ParameterError("test message")
+    assert str(exc) == "test message"

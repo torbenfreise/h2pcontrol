@@ -10,8 +10,8 @@ __pycache__/
 
 # IDE / local
 .idea/
-.claude/
 .DS_Store
+*.iml
 
 # Runtime output
 .logs/

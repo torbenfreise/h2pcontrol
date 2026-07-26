@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from h2pcontrol.controller.framework.parameters import ParamSpec, param
+from h2pcontrol.controller.framework.parameters import ParameterError, ParamSpec, param
 
 
 def _spec(
@@ -60,7 +60,7 @@ def test_coerce_int_from_float():
 
 
 def test_bool_rejects_int():
-    with pytest.raises(TypeError, match="expected bool"):
+    with pytest.raises(ParameterError, match="expected bool"):
         _spec(False, dtype=bool).validate(1)
 
 

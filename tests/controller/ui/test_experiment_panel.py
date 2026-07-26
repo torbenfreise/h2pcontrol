@@ -2,8 +2,9 @@ import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.ui.experiment_panel import ExperimentPanel, _ParamApplyError
+from h2pcontrol.controller.framework.parameters import ParameterError, param
+from h2pcontrol.controller.runtime.spec import CenteredAxis, LinearAxis, ListAxis
+from h2pcontrol.controller.ui.experiment_panel import ExperimentPanel
 
 
 class Exp(Experiment):
@@ -58,31 +59,68 @@ def multi_group_panel(qtbot):
     return p
 
 
-def test_initialise_uses_defaults(panel):
-    exp = panel.initialise_experiment()
-    assert exp.voltage == 3.3
-    assert exp.count == 10
+# ------------------------------------------------------------------
+# scan-change notification (drives the adaptive run controls)
+# ------------------------------------------------------------------
 
 
-def test_initialise_applies_edited_values(panel):
+def test_has_scan_axis_tracks_row_mode(panel):
+    assert not panel.has_scan_axis()
+    panel._rows["voltage"]._mode.setCurrentText("Linear")
+    assert panel.has_scan_axis()
+    panel._rows["voltage"]._mode.setCurrentText("Fixed")
+    assert not panel.has_scan_axis()
+
+
+def test_scan_changed_emitted_on_mode_toggle(qtbot, panel):
+    with qtbot.waitSignal(panel.scan_changed, timeout=1000):
+        panel._rows["voltage"]._mode.setCurrentText("Linear")
+
+
+def test_scan_changed_emitted_on_load(qtbot):
+    p = ExperimentPanel()
+    qtbot.addWidget(p)
+    with qtbot.waitSignal(p.scan_changed, timeout=1000):
+        p.load_experiment(Exp)
+
+
+# ------------------------------------------------------------------
+# current_values
+# ------------------------------------------------------------------
+
+
+def test_current_values_uses_defaults(panel):
+    values = panel.current_values()
+    assert values["voltage"] == 3.3
+    assert values["count"] == 10
+
+
+def test_current_values_applies_edited_values(panel):
     panel._rows["voltage"]._single.setText("4.0")
     panel._rows["count"]._single.setText("50")
-    exp = panel.initialise_experiment()
-    assert exp.voltage == 4.0
-    assert exp.count == 50
+    values = panel.current_values()
+    assert values["voltage"] == 4.0
+    assert values["count"] == 50
 
 
-def test_initialise_raises_on_invalid_value(panel):
+def test_current_values_raises_on_invalid_value(panel):
     panel._rows["voltage"]._single.setText("999")
-    with pytest.raises(_ParamApplyError, match="voltage"):
-        panel.initialise_experiment()
+    with pytest.raises(ParameterError, match="voltage"):
+        panel.current_values()
 
 
-def test_initialise_raises_when_no_experiment_loaded(qtbot):
+def test_current_values_raises_when_no_experiment_loaded(qtbot):
     panel = ExperimentPanel()
     qtbot.addWidget(panel)
     with pytest.raises(RuntimeError, match="No experiment loaded"):
-        panel.initialise_experiment()
+        panel.current_values()
+
+
+def test_current_values_excludes_scan_axes(panel):
+    panel._rows["voltage"]._mode.setCurrentText("Linear")
+    values = panel.current_values()
+    assert "voltage" not in values
+    assert "count" in values
 
 
 # ------------------------------------------------------------------
@@ -96,42 +134,46 @@ def test_default_mode_is_fixed(panel):
     assert not row.is_scan_axis()
 
 
-def test_linear_mode_produces_axis(panel):
+def test_linear_mode_produces_axis_spec(panel):
     row = panel._rows["voltage"]
     row._mode.setCurrentText("Linear")
     assert row.is_scan_axis()
-    ax = row.get_axis()
-    assert ax.start is not None and ax.stop is not None and ax.steps is not None
+    spec = row.get_axis_spec()
+    assert isinstance(spec, LinearAxis)
+    assert spec.param == "voltage"
 
 
-def test_centered_mode_produces_axis(panel):
+def test_centered_mode_produces_axis_spec(panel):
     row = panel._rows["voltage"]
     row._mode.setCurrentText("Centered")
     row._center.setValue(2.5)
     row._span.setValue(2.0)
     row._center_steps.setValue(5)
-    ax = row.get_axis()
-    vals = list(ax.values)
-    assert vals == pytest.approx([1.5, 2.0, 2.5, 3.0, 3.5])
+    spec = row.get_axis_spec()
+    assert isinstance(spec, CenteredAxis)
+    assert spec.center == 2.5
+    assert spec.span == 2.0
+    assert spec.steps == 5
 
 
-def test_list_mode_produces_axis(panel):
+def test_list_mode_produces_axis_spec(panel):
     row = panel._rows["voltage"]
     row._mode.setCurrentText("List")
     row._list_edit.setText("1.0, 2.5, 4.0")
-    ax = row.get_axis()
-    assert list(ax.values) == pytest.approx([1.0, 2.5, 4.0])
+    spec = row.get_axis_spec()
+    assert isinstance(spec, ListAxis)
+    assert spec.values == pytest.approx((1.0, 2.5, 4.0))
 
 
 def test_no_scan_when_all_fixed(panel):
-    assert panel.get_scan() is None
+    assert panel.current_scan_spec() is None
 
 
 def test_scan_returned_when_axis_active(panel):
     panel._rows["voltage"]._mode.setCurrentText("Linear")
-    scan = panel.get_scan()
-    assert scan is not None
-    assert len(scan.axes) == 1
+    scan_spec = panel.current_scan_spec()
+    assert scan_spec is not None
+    assert len(scan_spec.axes) == 1
 
 
 # ------------------------------------------------------------------
@@ -142,26 +184,25 @@ def test_scan_returned_when_axis_active(panel):
 def test_partial_group_without_zip_is_ok(grouped_panel):
     """Without zip checked, partial group scanning is allowed (crossed)."""
     grouped_panel._rows["voltage"]._mode.setCurrentText("Linear")
-    scan = grouped_panel.get_scan()
-    assert scan is not None
+    scan_spec = grouped_panel.current_scan_spec()
+    assert scan_spec is not None
 
 
 def test_partial_group_with_zip_raises(grouped_panel):
     """With zip checked, all params in the group must be scanned."""
     grouped_panel._zip_checks["ramp"].setChecked(True)
     grouped_panel._rows["voltage"]._mode.setCurrentText("Linear")
-    # current is still Fixed
-    with pytest.raises(_ParamApplyError, match="ramp"):
-        grouped_panel.get_scan()
+    with pytest.raises(ParameterError, match="ramp"):
+        grouped_panel.current_scan_spec()
 
 
 def test_full_group_zipped(grouped_panel):
     grouped_panel._zip_checks["ramp"].setChecked(True)
     grouped_panel._rows["voltage"]._mode.setCurrentText("Linear")
     grouped_panel._rows["current"]._mode.setCurrentText("Linear")
-    scan = grouped_panel.get_scan()
-    assert scan is not None
-    assert len(scan.axes) == 2
+    scan_spec = grouped_panel.current_scan_spec()
+    assert scan_spec is not None
+    assert len(scan_spec.axes) == 2
 
 
 def test_zipped_group_produces_fewer_shots(grouped_panel):
@@ -170,12 +211,14 @@ def test_zipped_group_produces_fewer_shots(grouped_panel):
     grouped_panel._rows["current"]._mode.setCurrentText("Linear")
 
     # Without zip: crossed → 10 * 10 = 100
-    scan_crossed = grouped_panel.get_scan()
+    scan_spec = grouped_panel.current_scan_spec()
+    scan_crossed = scan_spec.to_scan(GroupedExp)
     assert len(scan_crossed) == 100
 
     # With zip: lockstep → 10
     grouped_panel._zip_checks["ramp"].setChecked(True)
-    scan_zipped = grouped_panel.get_scan()
+    scan_spec = grouped_panel.current_scan_spec()
+    scan_zipped = scan_spec.to_scan(GroupedExp)
     assert len(scan_zipped) == 10
 
 
@@ -186,10 +229,10 @@ def test_zipped_group_points_are_lockstep(grouped_panel):
     grouped_panel._rows["voltage"]._steps.setValue(3)
     grouped_panel._rows["current"]._mode.setCurrentText("Linear")
     grouped_panel._rows["current"]._steps.setValue(3)
-    scan = grouped_panel.get_scan()
+    scan_spec = grouped_panel.current_scan_spec()
+    scan = scan_spec.to_scan(GroupedExp)
     points = list(scan.points())
     assert len(points) == 3
-    # Each point should have both voltage and current set together
     for pt in points:
         assert "voltage" in pt
         assert "current" in pt
@@ -208,21 +251,20 @@ def test_multi_group_both_zipped(multi_group_panel):
     multi_group_panel._rows["current"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["freq"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["power"]._mode.setCurrentText("Linear")
-    scan = multi_group_panel.get_scan()
-    # ramp zipped: 10, rf zipped: 10, crossed: 10 * 10 = 100
+    scan_spec = multi_group_panel.current_scan_spec()
+    scan = scan_spec.to_scan(MultiGroupExp)
     assert len(scan) == 100
 
 
 def test_multi_group_one_zipped_one_not(multi_group_panel):
     """One group zipped, the other crossed: 10 * 10 * 10 = 1000."""
     multi_group_panel._zip_checks["ramp"].setChecked(True)
-    # rf NOT zipped → freq and power are independent
     multi_group_panel._rows["voltage"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["current"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["freq"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["power"]._mode.setCurrentText("Linear")
-    scan = multi_group_panel.get_scan()
-    # ramp zipped: 10, freq: 10, power: 10, crossed: 10 * 10 * 10 = 1000
+    scan_spec = multi_group_panel.current_scan_spec()
+    scan = scan_spec.to_scan(MultiGroupExp)
     assert len(scan) == 1000
 
 
@@ -233,6 +275,6 @@ def test_multi_group_with_ungrouped(multi_group_panel):
     multi_group_panel._rows["current"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["gain"]._mode.setCurrentText("Linear")
     multi_group_panel._rows["gain"]._steps.setValue(5)
-    scan = multi_group_panel.get_scan()
-    # ramp zipped: 10, gain: 5, crossed: 10 * 5 = 50
+    scan_spec = multi_group_panel.current_scan_spec()
+    scan = scan_spec.to_scan(MultiGroupExp)
     assert len(scan) == 50

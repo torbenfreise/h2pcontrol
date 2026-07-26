@@ -1,6 +1,6 @@
 from collections import defaultdict
 
-from PySide6.QtCore import QLocale, Qt
+from PySide6.QtCore import QLocale, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -16,8 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..framework.experiment import Experiment
-from ..framework.parameters import ParamSpec
-from ..framework.scan import Axis, Scan
+from ..framework.parameters import ParameterError, ParamSpec
+from ..runtime.spec import AxisSpec, CenteredAxis, ChoicesAxis, LinearAxis, ListAxis, ScanSpec
 
 
 class _FloatSpinBox(QDoubleSpinBox):
@@ -39,6 +39,9 @@ class _FloatSpinBox(QDoubleSpinBox):
 class _ParamRow(QWidget):
     """Base class for a single parameter row."""
 
+    # Signal when this rows scan status may have changed
+    scan_toggled = Signal()
+
     def __init__(self, name: str, spec: ParamSpec, parent=None):
         super().__init__(parent)
         self._name = name
@@ -50,10 +53,12 @@ class _ParamRow(QWidget):
     def is_scan_axis(self) -> bool:
         raise NotImplementedError
 
-    def apply_to(self, experiment: Experiment) -> None:
+    def value(self) -> object:
+        """Return the current fixed value for this parameter."""
         raise NotImplementedError
 
-    def get_axis(self) -> Axis:
+    def get_axis_spec(self) -> AxisSpec:
+        """Return an AxisSpec for this parameter (when scanned)."""
         raise NotImplementedError
 
 
@@ -180,35 +185,35 @@ class _ContinuousParamRow(_ParamRow):
         for w in self._centered_widgets:
             w.setVisible(is_centered)
         self._list_edit.setVisible(is_list)
+        self.scan_toggled.emit()
 
     def is_scan_axis(self) -> bool:
         return self._mode.currentText() != "Fixed"
 
-    def apply_to(self, experiment: Experiment) -> None:
+    def value(self) -> object:
         text = self._single.text().strip()
-        value: object = self._spec.dtype(text) if self._spec.dtype is not None else text
-        setattr(experiment, self._name, value)
+        return self._spec.dtype(text) if self._spec.dtype is not None else text
 
-    def get_axis(self) -> Axis:
+    def get_axis_spec(self) -> AxisSpec:
         mode = self._mode.currentText()
         if mode == "Linear":
-            return Axis(
-                param=self._spec,
+            return LinearAxis(
+                param=self._name,
                 start=self._start.value(),
                 stop=self._stop.value(),
                 steps=self._steps.value(),
             )
         if mode == "Centered":
-            return Axis.centered(
-                param=self._spec,
+            return CenteredAxis(
+                param=self._name,
                 center=self._center.value(),
                 span=self._span.value(),
                 steps=self._center_steps.value(),
             )
         if mode == "List":
-            values = [float(v.strip()) for v in self._list_edit.text().split(",") if v.strip()]
-            return Axis.from_list(param=self._spec, values=values)
-        raise RuntimeError(f"get_axis called in {mode} mode")
+            values = tuple(float(v.strip()) for v in self._list_edit.text().split(",") if v.strip())
+            return ListAxis(param=self._name, values=values)
+        raise RuntimeError(f"get_axis_spec called in {mode} mode")
 
 
 class _ChoicesParamRow(_ParamRow):
@@ -241,15 +246,16 @@ class _ChoicesParamRow(_ParamRow):
     def _on_toggled(self, checked: bool) -> None:
         self._combo.setVisible(not checked)
         self._scan_label.setVisible(checked)
+        self.scan_toggled.emit()
 
     def is_scan_axis(self) -> bool:
         return self._check.isChecked()
 
-    def apply_to(self, experiment: Experiment) -> None:
-        setattr(experiment, self._name, self._combo.currentData())
+    def value(self) -> object:
+        return self._combo.currentData()
 
-    def get_axis(self) -> Axis:
-        return Axis(param=self._spec)
+    def get_axis_spec(self) -> AxisSpec:
+        return ChoicesAxis(param=self._name)
 
 
 class _TextParamRow(_ParamRow):
@@ -266,10 +272,10 @@ class _TextParamRow(_ParamRow):
     def is_scan_axis(self) -> bool:
         return False
 
-    def apply_to(self, experiment: Experiment) -> None:
-        setattr(experiment, self._name, self._edit.text().strip())
+    def value(self) -> object:
+        return self._edit.text().strip()
 
-    def get_axis(self) -> Axis:
+    def get_axis_spec(self) -> AxisSpec:
         raise RuntimeError("Text parameters cannot be scanned")
 
 
@@ -307,11 +313,10 @@ def _make_param_row(name: str, spec: ParamSpec, parent: QWidget | None = None) -
 # ------------------------------------------------------------------
 
 
-class _ParamApplyError(Exception):
-    """Raised when a parameter value cannot be applied."""
-
-
 class ExperimentPanel(QTreeWidget):
+    # Signal when the set of scanned parameters may have changed
+    scan_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setColumnCount(2)
@@ -336,7 +341,7 @@ class ExperimentPanel(QTreeWidget):
         # Partition params into groups and ungrouped
         groups: dict[str, list[tuple[str, ParamSpec]]] = defaultdict(list)
         ungrouped: list[tuple[str, ParamSpec]] = []
-        for name, spec in cls._parameters.items():
+        for name, spec in cls.parameters().items():
             if spec.group is not None:
                 groups[spec.group].append((name, spec))
             else:
@@ -356,6 +361,7 @@ class ExperimentPanel(QTreeWidget):
             for name, spec in params:
                 child = QTreeWidgetItem(group_item, [name])
                 row = _make_param_row(name, spec)
+                row.scan_toggled.connect(self.scan_changed)
                 self.setItemWidget(child, 1, row)
                 self._rows[name] = row
 
@@ -363,55 +369,66 @@ class ExperimentPanel(QTreeWidget):
         for name, spec in ungrouped:
             item = QTreeWidgetItem(self, [name])
             row = _make_param_row(name, spec)
+            row.scan_toggled.connect(self.scan_changed)
             self.setItemWidget(item, 1, row)
             self._rows[name] = row
 
-    def initialise_experiment(self) -> Experiment:
-        """Instantiate the loaded experiment class with current parameter values.
+        self.scan_changed.emit()
 
-        :raises _ParamApplyError: if a parameter is invalid.
+    def has_scan_axis(self) -> bool:
+        """True if at least one parameter row is currently set to scan."""
+        return any(row.is_scan_axis() for row in self._rows.values())
+
+    def current_values(self) -> dict[str, object]:
+        """Return validated values for all non-scanned parameters.
+
+        :raises ParameterError: if a parameter value is invalid.
         :raises RuntimeError: if no experiment is loaded.
         """
         if self._cls is None:
             raise RuntimeError("No experiment loaded")
-        exp = self._cls()
+        values: dict[str, object] = {}
+        params = self._cls.parameters()
         for name, row in self._rows.items():
+            if row.is_scan_axis():
+                continue
             try:
-                row.apply_to(exp)
+                raw = row.value()
             except (ValueError, TypeError) as exc:
-                raise _ParamApplyError(f"Parameter {name!r}: {exc}") from exc
-        return exp
+                raise ParameterError(f"Parameter {name!r}: {exc}") from exc
+            values[name] = params[name].validate(raw)
+        return values
 
-    def get_scan(self) -> Scan | None:
-        """Return a Scan if at least one axis is checked, else None.
+    def current_scan_spec(self) -> ScanSpec | None:
+        """Return a ScanSpec if at least one axis is checked, else None.
 
-        :raises _ParamApplyError: if a group is partially scanned.
+        :raises ParameterError: if a group is partially scanned.
         """
         if self._cls is None:
             return None
 
         # Determine which groups have zip enabled
         zipped_groups: set[str] = set()
-        params = self._cls._parameters
+        params = self._cls.parameters()
         groups: dict[str, list[str]] = defaultdict(list)
         for name, spec in params.items():
             if spec.group is not None:
                 groups[spec.group].append(name)
 
         for group_name, members in groups.items():
-            if not self._zip_checks.get(group_name, QCheckBox()).isChecked():
+            if not self._zip_checks[group_name].isChecked():
                 continue
             zipped_groups.add(group_name)
             # When zipped, all params in the group must be scanned
             scanning = [n for n in members if self._rows[n].is_scan_axis()]
             if scanning and len(scanning) != len(members):
                 not_scanning = [n for n in members if n not in scanning]
-                raise _ParamApplyError(
+                raise ParameterError(
                     f"Group {group_name!r}: all parameters must be scanned together "
                     f"when zipped. Missing: {not_scanning}"
                 )
 
-        axes = [row.get_axis() for row in self._rows.values() if row.is_scan_axis()]
+        axes = tuple(row.get_axis_spec() for row in self._rows.values() if row.is_scan_axis())
         if not axes:
             return None
-        return Scan(*axes, zipped_groups=zipped_groups)
+        return ScanSpec(axes=axes, zipped_groups=frozenset(zipped_groups))

@@ -17,7 +17,7 @@ To run the same checks locally:
 ```bash
 uv run ruff format src/ tests/ examples/       # format in-place
 uv run ruff check --fix src/ tests/ examples/  # lint and auto-fix
-uv run pyright src/ tests/                     # type-check
+uv run pyright src/ tests/ examples/           # type-check
 ```
 
 These checks also run automatically on every pull request and pushes to main via

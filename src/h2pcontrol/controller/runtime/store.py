@@ -1,10 +1,15 @@
 """Per-run HDF5 persistence.
 
-Layout: one file per run, all shots inside.
+Layout: one file per run
 
     <results_root>/<experiment_name>_0001.h5
+        /  (root attrs)              — run metadata: experiment, run_number and
+                                       started_at, plus every key passed to
+                                       create(attrs=…) — the metadata from
+                                       run_metadata() (h2pcontrol_version,
+                                       python_version, experiment_source) and run_id
         /data                        — Table with one row per shot (scalars)
-        /traces/shot_00000/<column>   — array dataset per trace / image
+        /traces/shot_00000/<column>  — array dataset per trace / image
 
 The file is kept open during a run and flushed after every shot.
 """
@@ -12,6 +17,7 @@ The file is kept open during a run and flushed after every shot.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -57,7 +63,13 @@ class RunStore:
         self._traces: tables.Group | None = None
 
     @classmethod
-    def create(cls, root: Path | str, experiment_name: str) -> RunStore:
+    def create(
+        cls,
+        root: Path | str,
+        experiment_name: str,
+        *,
+        attrs: Mapping[str, str] | None = None,
+    ) -> RunStore:
         """Create the next run file for *experiment_name* under *root*."""
         root = Path(root).expanduser()
         root.mkdir(parents=True, exist_ok=True)
@@ -69,6 +81,9 @@ class RunStore:
         h5.root._v_attrs.experiment = experiment_name
         h5.root._v_attrs.run_number = run_number
         h5.root._v_attrs.started_at = datetime.now().astimezone().isoformat()
+        if attrs:
+            for key, value in attrs.items():
+                setattr(h5.root._v_attrs, key, value)
 
         return cls(h5, run_number, experiment_name, path)
 
@@ -92,14 +107,31 @@ class RunStore:
                     desc[col] = tables.Col.from_dtype(np.dtype("S256"))
                 else:
                     desc[col] = tables.Col.from_dtype(np_dtype)
-            self._table = self._h5.create_table("/", "data", desc)
+            table = self._h5.create_table("/", "data", desc)
+            self._table = table
+        else:
+            table = self._table
+            expected = set(table.colnames) - {"shot_idx"}
+            actual = set(flat.columns)
+            if actual != expected:
+                added = sorted(actual - expected)
+                missing = sorted(expected - actual)
+                parts = []
+                if added:
+                    parts.append(f"added {added}")
+                if missing:
+                    parts.append(f"missing {missing}")
+                raise ValueError(
+                    f"Shot {shot_idx} column mismatch ({'; '.join(parts)}) "
+                    "— all shots in a run must share the same columns"
+                )
 
-        row = self._table.row
+        row = table.row
         row["shot_idx"] = shot_idx
         for col in flat.columns:
             row[col] = flat[col].iloc[0]
         row.append()
-        self._table.flush()
+        table.flush()
 
         # Write trace / image arrays
         if arrays:

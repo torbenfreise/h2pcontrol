@@ -1,11 +1,14 @@
-import contextlib
-import importlib.util
+import hashlib
+import logging
 import sys
+import types
 from pathlib import Path
 
 from h2pcontrol.sdk.client import Client
 
 from ..framework.experiment import Experiment
+
+logger = logging.getLogger(__name__)
 
 
 class Session:
@@ -24,37 +27,47 @@ class Session:
         old = self._client
         self._address = value
         self._client = Client(value)
-        with contextlib.suppress(AttributeError):  # TODO(sdk>=0.2.8): remove suppress
-            await old.close()
+        await old.close()
 
     @property
     def client(self) -> Client:
         return self._client
 
-    def load_experiment(self, path: str) -> type[Experiment]:
-        """Load the first Experiment subclass found in the given .py file."""
-        if not Path(path).is_file():
-            raise ImportError(f"Cannot load experiment from {path!r}")
-        spec = importlib.util.spec_from_file_location("_experiment_module", path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"Cannot load experiment from {path!r}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[f"_experiment_{path}"] = module
-        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    def load_experiment_from_source(self, source: str, path: str | Path) -> type[Experiment]:
+        """Compile the experiment file text (source)  into its Experiment subclass.
+
+        Raises ValueError if zero or more than one candidate is found.
+        """
+        resolved = Path(path).resolve()
+
+        # Stable module key
+        module_key = f"h2pexp_{hashlib.sha1(str(resolved).encode()).hexdigest()[:12]}"
+
+        module = types.ModuleType(module_key)
+        module.__file__ = str(resolved)
+        sys.modules[module_key] = module
+        code = compile(source, str(resolved), "exec")
+        exec(code, module.__dict__)
 
         candidates = [
             v
             for v in vars(module).values()
-            if isinstance(v, type) and issubclass(v, Experiment) and v is not Experiment
+            if isinstance(v, type)
+            and issubclass(v, Experiment)
+            and v is not Experiment
+            and v.__module__ == module_key
         ]
         if not candidates:
-            raise ValueError(f"No Experiment subclass found in {path!r}")
+            raise ValueError(f"No Experiment subclass found in {str(path)!r}")
+        if len(candidates) > 1:
+            names = ", ".join(c.__name__ for c in candidates)
+            raise ValueError(f"File defines multiple experiments: {names} — keep one per file")
         return candidates[0]
 
     async def ping_manager(self) -> bool:
         """:return True if the manager responds, else False."""
         try:
-            await self._client._ensure_connected()
+            await self._client.connect()
             return True
         except Exception:
             return False
