@@ -15,3 +15,8 @@ __pycache__/
 
 # Runtime output
 .logs/
+
+# Coverage
+.coverage
+coverage.xml
+htmlcov/

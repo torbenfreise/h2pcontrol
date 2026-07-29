@@ -8,14 +8,23 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: sudo apt-get update && sudo apt-get install -y '^libxcb.*-dev' libx11-xcb-dev libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1
       - run: uv sync --locked --group dev
-      - run: uv run pytest -m "not integration"
+      - run: uv run pytest -m "not integration" --cov
         env:
           QT_QPA_PLATFORM: offscreen
+      # On PRS: Post/update a coverage comment on PRs
+      # On push to main: update the coverage badge on the python-coverage-comment-action-data branch.
+      - name: Coverage comment
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
 
   integration:
     runs-on: ubuntu-latest

@@ -1,5 +1,7 @@
 # h2pcontrol
 
+[![coverage](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/torbenfreise/h2pcontrol/python-coverage-comment-action-data/endpoint.json)](https://github.com/torbenfreise/h2pcontrol/actions/workflows/test.yml)
+
 Experiment control GUI and framework for the h2pcontrol ecosystem. Works together
 with the [h2pmanager](https://github.com/torbenfreise/h2pcontrol-manager) registry,
 the [h2pcontrol-sdk](https://github.com/torbenfreise/h2pcontrol-sdk) client/server SDK,
