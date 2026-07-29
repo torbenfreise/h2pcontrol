@@ -33,6 +33,7 @@ dev = [
     "pyright>=1.1.0",
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=6.0.0",
     "pytest-qt>=4.0.0",
     "pandas-stubs~=3.0.3",
 ]
@@ -54,6 +55,14 @@ h2pcontrol = "h2pcontrol.controller.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 namespaces = true
+
+[tool.coverage.run]
+source = ["src/h2pcontrol"]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
 
 [tool.pyright]
 pythonVersion = "3.12"
