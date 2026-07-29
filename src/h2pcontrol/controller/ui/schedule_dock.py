@@ -208,6 +208,8 @@ class ScheduleDock(QDockWidget):
     def _details_dialog(self, entry: QueueEntry) -> QDialog:
         """Build the run-details dialog for *entry*."""
         dlg = QDialog(self)
+        # Release the C++ object on close
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.setWindowTitle(f"Run details — {entry.request.experiment_name}")
         dlg.resize(560, 480)
         layout = QVBoxLayout(dlg)
