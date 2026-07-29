@@ -284,9 +284,15 @@ class TestCancel:
 
         block.set()
         await wait_for(engine, RunFinished)
-        # Cancelled entry never ran → only one sink created.
+        # Cancelled entry never ran -> only one sink created.
         assert len(sinks) == 1
         assert engine.queue[1].state == EntryState.CANCELLED
+
+        # The cancelled run is still in _pending,
+        # assert that engine returns to idle.
+        assert engine.state == EngineState.IDLE
+        state_seq = [e.state for e in events if isinstance(e, StateChanged)]
+        assert state_seq == [EngineState.RUNNING, EngineState.IDLE]
 
     async def test_cancel_finished_entry_is_noop(
         self, experiment_factory, make_engine, make_request, wait_for

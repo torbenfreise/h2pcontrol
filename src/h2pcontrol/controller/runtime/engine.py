@@ -182,6 +182,12 @@ class RunEngine:
     def _queue_changed(self) -> QueueChanged:
         return QueueChanged(entries=self.queue)
 
+    def _has_active_entries(self) -> bool:
+        """True if any entry is still queued or running."""
+        return any(
+            e.state in (EntryState.QUEUED, EntryState.RUNNING) for e in self._entries.values()
+        )
+
     async def _worker_loop(self) -> None:
         """Drain the pending queue forever."""
         while True:
@@ -317,6 +323,6 @@ class RunEngine:
                 )
             )
             self._emit(self._queue_changed())
-            if self._pending.empty():
-                self._set_state(EngineState.IDLE)
             self._current_task = None
+            if not self._has_active_entries():
+                self._set_state(EngineState.IDLE)
