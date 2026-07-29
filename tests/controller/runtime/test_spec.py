@@ -105,6 +105,33 @@ class TestScanSpec:
         points = list(scan.points())
         assert len(points) == 6  # 3 x 2
 
+    def test_to_scan_rejects_out_of_bounds_list(self):
+        # voltage max is 5.0
+        spec = ScanSpec(axes=(ListAxis(param="voltage", values=(1.0, 999.0)),))
+        with pytest.raises(ParameterError, match="voltage"):
+            spec.to_scan(SpecExperiment)
+
+    def test_to_scan_rejects_out_of_bounds_linear(self):
+        # A linear sweep whose endpoint exceeds the parameter maximum.
+        spec = ScanSpec(axes=(LinearAxis(param="voltage", start=0.0, stop=50.0, steps=3),))
+        with pytest.raises(ParameterError, match="voltage"):
+            spec.to_scan(SpecExperiment)
+
+    def test_to_scan_accepts_in_bounds_list(self):
+        spec = ScanSpec(axes=(ListAxis(param="voltage", values=(0.0, 2.5, 5.0)),))
+        scan = spec.to_scan(SpecExperiment)
+        assert len(list(scan.points())) == 3
+
+    def test_to_scan_rejects_mismatched_zip_lengths(self):
+        # voltage and current share group "ramp",  zipped axes must be equal length.
+        axes = (
+            LinearAxis(param="voltage", start=0.0, stop=5.0, steps=10),
+            LinearAxis(param="current", start=0.0, stop=10.0, steps=9),
+        )
+        spec = ScanSpec(axes=axes, zipped_groups=frozenset({"ramp"}))
+        with pytest.raises(ParameterError, match="mismatched"):
+            spec.to_scan(SpecExperiment)
+
 
 # ---------------------------------------------------------------------------
 # RunRequest validation

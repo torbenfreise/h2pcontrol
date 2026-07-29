@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from .parameters import ParamSpec
+from .parameters import ParameterError, ParamSpec
 
 
 @dataclass(frozen=True)
@@ -87,6 +87,17 @@ class Axis:
             return self.param.choices  # type: ignore[return-value]
         return np.linspace(self.start, self.stop, self.steps)  # type: ignore[arg-type]
 
+    def validate_values(self) -> None:
+        """Validate every value this axis produces against the parameter spec.
+        Raises ``ParameterError`` on the first out-of-range or invalid value.
+        """
+        if self.explicit_values is None and self.start is not None:
+            values = (self.start, self.stop)  # only check high / low for linear sweep
+        else:
+            values = self.values
+        for value in values:
+            self.param.validate(value)
+
 
 class Scan:
     """N-dimensional scan with support for zipped groups.
@@ -103,6 +114,13 @@ class Scan:
 
     def __len__(self) -> int:
         return math.prod(self._group_length(g) for g in self._groups().values())
+
+    def validate(self) -> None:
+        """Check that groups have the same length.
+        Raises ``ParameterError`` on mismatch.
+        """
+        for axes in self._groups().values():
+            self._group_length(axes)
 
     def points(self) -> Iterator[dict[str, Any]]:
         groups = self._groups()
@@ -142,7 +160,7 @@ class Scan:
         lengths = {len(ax) for ax in axes}
         if len(lengths) > 1:
             names = [ax.name for ax in axes]
-            raise ValueError(
+            raise ParameterError(
                 f"Grouped axes {names} have mismatched lengths: "
                 + ", ".join(f"{ax.name}={len(ax)}" for ax in axes)
             )

@@ -109,6 +109,14 @@ def test_current_values_raises_on_invalid_value(panel):
         panel.current_values()
 
 
+def test_row_value_validates_bounds(panel):
+    """row.value() must itself enforce parameter bounds (raise ParameterError),
+    not merely coerce the type."""
+    panel._rows["voltage"]._single.setText("999")
+    with pytest.raises(ParameterError, match="voltage"):
+        panel._rows["voltage"].value()
+
+
 def test_current_values_raises_when_no_experiment_loaded(qtbot):
     panel = ExperimentPanel()
     qtbot.addWidget(panel)
@@ -165,6 +173,81 @@ def test_list_mode_produces_axis_spec(panel):
     assert spec.values == pytest.approx((1.0, 2.5, 4.0))
 
 
+def test_list_mode_invalid_text_raises_parameter_error(panel):
+    row = panel._rows["voltage"]
+    row._mode.setCurrentText("List")
+    row._list_edit.setText("1, 2, foo")
+    with pytest.raises(ParameterError, match="voltage"):
+        panel.current_scan_spec()
+
+
+def test_get_axis_spec_invalid_list_raises_parameter_error(panel):
+    row = panel._rows["voltage"]
+    row._mode.setCurrentText("List")
+    row._list_edit.setText("1, 2, foo")
+    with pytest.raises(ParameterError, match="voltage"):
+        row.get_axis_spec()
+
+
+def test_current_scan_spec_rejects_out_of_bounds_list(panel):
+    row = panel._rows["voltage"]
+    row._mode.setCurrentText("List")
+    row._list_edit.setText("1, 999")
+    with pytest.raises(ParameterError, match="voltage"):
+        panel.current_scan_spec()
+
+
+def test_linear_spinboxes_clamped_to_param_bounds(panel):
+    row = panel._rows["voltage"]  # voltage: min=0.0, max=5.0
+    assert row._start.minimum() == pytest.approx(0.0)
+    assert row._start.maximum() == pytest.approx(5.0)
+    assert row._stop.minimum() == pytest.approx(0.0)
+    assert row._stop.maximum() == pytest.approx(5.0)
+    assert row._center.minimum() == pytest.approx(0.0)
+    assert row._center.maximum() == pytest.approx(5.0)
+
+
+# ------------------------------------------------------------------
+# Live field validation
+# ------------------------------------------------------------------
+
+
+def test_fixed_field_live_validation(panel):
+    row = panel._rows["voltage"]  # min 0, max 5
+    row._single.setText("999")  # out of bounds
+    assert "red" in row._single.styleSheet()
+    row._single.setText("3.0")  # valid
+    assert row._single.styleSheet() == ""
+
+
+def test_list_field_live_validation(panel):
+    row = panel._rows["voltage"]  # min 0, max 5
+    row._mode.setCurrentText("List")
+    row._list_edit.setText("1, foo")  # unparseable
+    assert "red" in row._list_edit.styleSheet()
+    row._list_edit.setText("1, 2, 3")  # valid
+    assert row._list_edit.styleSheet() == ""
+    row._list_edit.setText("999")  # out of bounds
+    assert "red" in row._list_edit.styleSheet()
+    row._list_edit.setText("")  # empty list is not a valid scan
+    assert "red" in row._list_edit.styleSheet()
+
+
+def test_centered_field_live_validation(panel):
+    row = panel._rows["voltage"]  # min 0, max 5
+    row._mode.setCurrentText("Centered")
+    row._center.setValue(4.0)
+    row._span.setValue(4.0)  # 4 ± 2 = [2, 6] → 6 > 5
+    assert "red" in row._span.styleSheet()
+    row._span.setValue(2.0)  # 4 ± 1 = [3, 5] → in bounds
+    assert row._span.styleSheet() == ""
+
+
+def test_centered_default_is_schedulable(panel):
+    panel._rows["voltage"]._mode.setCurrentText("Centered")
+    assert panel.current_scan_spec() is not None
+
+
 def test_no_scan_when_all_fixed(panel):
     assert panel.current_scan_spec() is None
 
@@ -193,6 +276,16 @@ def test_partial_group_with_zip_raises(grouped_panel):
     grouped_panel._zip_checks["ramp"].setChecked(True)
     grouped_panel._rows["voltage"]._mode.setCurrentText("Linear")
     with pytest.raises(ParameterError, match="ramp"):
+        grouped_panel.current_scan_spec()
+
+
+def test_current_scan_spec_rejects_mismatched_zip_lengths(grouped_panel):
+    """Zipped axes of unequal length must be rejected at schedule time."""
+    grouped_panel._zip_checks["ramp"].setChecked(True)
+    for name, steps in (("voltage", 10), ("current", 9)):
+        grouped_panel._rows[name]._mode.setCurrentText("Linear")
+        grouped_panel._rows[name]._steps.setValue(steps)
+    with pytest.raises(ParameterError, match="mismatched"):
         grouped_panel.current_scan_spec()
 
 

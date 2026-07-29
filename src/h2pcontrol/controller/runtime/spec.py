@@ -28,7 +28,11 @@ class AxisSpec(ABC):
             raise ParameterError(
                 f"Unknown parameter {self.param!r}; declared parameters: {available}"
             )
-        return self._build(params[self.param])
+        return self.resolve(params[self.param])
+
+    def resolve(self, spec: ParamSpec[Any]) -> Axis:
+        """Build the live Axis from an already-resolved ParamSpec (skips name lookup)."""
+        return self._build(spec)
 
     @abstractmethod
     def _build(self, spec: ParamSpec[Any]) -> Axis:
@@ -97,9 +101,17 @@ class ScanSpec:
     zipped_groups: frozenset[str] = frozenset()
 
     def to_scan(self, cls: type[Experiment]) -> Scan:
-        """Resolve all axes and build a live Scan object."""
+        """Resolve all axes and build a live Scan object.
+
+        Each resolved axis is validated against its parameter's bounds/choices,
+        raising ``ParameterError`` for out-of-range scan values.
+        """
         resolved = [a.to_axis(cls) for a in self.axes]
-        return Scan(*resolved, zipped_groups=set(self.zipped_groups))
+        for axis in resolved:
+            axis.validate_values()
+        scan = Scan(*resolved, zipped_groups=set(self.zipped_groups))
+        scan.validate()  # zipped axes must share a length
+        return scan
 
 
 @dataclass(frozen=True)
