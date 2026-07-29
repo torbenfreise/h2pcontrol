@@ -24,13 +24,6 @@ class GroupedExperiment(Experiment):
         return pd.DataFrame({"reading": [1.0]})
 
 
-class OtherExperiment(Experiment):
-    voltage = param(1.0)  # same name, different experiment
-
-    async def shot(self, ctx) -> pd.DataFrame:
-        return pd.DataFrame({"reading": [1.0]})
-
-
 class TestAxis:
     def test_values_linearly_spaced(self):
         ax = Axis(ScanExperiment.voltage, start=0.0, stop=1.0, steps=3)
@@ -85,14 +78,10 @@ class TestAxis:
         with pytest.raises(ValueError, match="empty"):
             Axis.from_list(ScanExperiment.voltage, [])
 
-    def test_explicit_values_with_range_raises(self):
-        with pytest.raises(ValueError, match="Cannot combine"):
-            Axis(ScanExperiment.voltage, start=0, stop=1, steps=2, explicit_values=(1.0,))
-
 
 class TestScan:
     def test_requires_at_least_one_axis(self):
-        with pytest.raises(ValueError):
+        with pytest.raises(AssertionError):
             Scan()
 
     def test_single_axis_len(self):
@@ -189,19 +178,3 @@ class TestScanGroups:
         )
         points = list(scan.points())
         assert len(points) == 4
-
-
-class TestScanValidation:
-    def test_validate_for_accepts_declared_params(self):
-        Scan(Axis(ScanExperiment.voltage, 0, 1, 2)).validate_for(ScanExperiment)
-
-    def test_validate_for_accepts_inherited_params(self):
-        class ChildExperiment(ScanExperiment):
-            pass
-
-        Scan(Axis(ScanExperiment.voltage, 0, 1, 2)).validate_for(ChildExperiment)
-
-    def test_validate_for_rejects_foreign_spec(self):
-        # same parameter name, but declared on a different experiment class
-        with pytest.raises(ValueError, match="not parameters of"):
-            Scan(Axis(OtherExperiment.voltage, 0, 1, 2)).validate_for(ScanExperiment)

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import sys
 
 import qasync
@@ -8,6 +9,11 @@ from h2pcontrol.controller.ui.main_window import MainWindow
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    )
+
     app = QApplication(sys.argv)
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)

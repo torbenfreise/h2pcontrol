@@ -134,6 +134,29 @@ class TestSaveShot:
             assert data["label"].iloc[0] == b"hello"
 
 
+class TestColumnMismatch:
+    def test_extra_column_reported(self, tmp_path):
+        store = RunStore.create(tmp_path, "Exp")
+        store.save_shot(0, pd.DataFrame({"a": [1.0], "b": [2.0]}))
+        with pytest.raises(ValueError, match=r"added \['c'\]"):
+            store.save_shot(1, pd.DataFrame({"a": [1.0], "b": [2.0], "c": [3.0]}))
+        store.close()
+
+    def test_missing_column_reported(self, tmp_path):
+        store = RunStore.create(tmp_path, "Exp")
+        store.save_shot(0, pd.DataFrame({"a": [1.0], "b": [2.0]}))
+        with pytest.raises(ValueError, match=r"missing \['b'\]"):
+            store.save_shot(1, pd.DataFrame({"a": [1.0]}))
+        store.close()
+
+    def test_both_directions_reported(self, tmp_path):
+        store = RunStore.create(tmp_path, "Exp")
+        store.save_shot(0, pd.DataFrame({"a": [1.0], "b": [2.0]}))
+        with pytest.raises(ValueError, match=r"added.*missing|missing.*added"):
+            store.save_shot(1, pd.DataFrame({"a": [1.0], "c": [3.0]}))
+        store.close()
+
+
 class TestTraces:
     def test_trace_dtype_preserved(self, tmp_path):
         store = RunStore.create(tmp_path, "Exp")

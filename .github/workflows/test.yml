@@ -7,11 +7,41 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: sudo apt-get update && sudo apt-get install -y '^libxcb.*-dev' libx11-xcb-dev libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1
       - run: uv sync --locked --group dev
-      - run: uv run pytest
+      - run: uv run pytest -m "not integration"
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+      - run: sudo apt-get update && sudo apt-get install -y '^libxcb.*-dev' libx11-xcb-dev libglu1-mesa-dev libxrender-dev libxi-dev libxkbcommon-dev libxkbcommon-x11-dev libegl1
+      - run: uv sync --locked --group dev
+      - run: go install github.com/torbenfreise/h2pcontrol-manager/cmd/h2pmanager@v0.1.10
+      - name: Start h2pmanager
+        run: h2pmanager start &
+      - name: Wait for manager to be ready
+        run: |
+          for i in $(seq 1 10); do
+            if nc -z localhost 50051 2>/dev/null; then
+              echo "Manager is ready"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "Manager failed to start"
+          exit 1
+      - run: uv run pytest tests/integration -m integration
         env:
           QT_QPA_PLATFORM: offscreen

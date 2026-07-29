@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from types import MappingProxyType
+from typing import Any, ClassVar, final
 
 import pandas as pd
 
@@ -8,10 +10,11 @@ from .parameters import ParamSpec
 from .stubs import StubSpec
 
 
-@dataclass
+@dataclass(frozen=True)
 class Context:
     shot_idx: int
-    total_shots: int = 1
+    run_id: str = ""
+    total_shots: int | None = None
 
 
 class Experiment(ABC):
@@ -29,7 +32,7 @@ class Experiment(ABC):
     def _collect_parameters(experiment_cls) -> None:
         """Collects param() declarations. The ParamSpec stays on the class as a
         data descriptor: class access yields the spec, instance access the value."""
-        inherited = dict(getattr(experiment_cls, "_parameters", {}))
+        inherited = dict(experiment_cls._parameters)
         for name, val in list(experiment_cls.__dict__.items()):
             if not isinstance(val, ParamSpec):
                 continue
@@ -46,7 +49,7 @@ class Experiment(ABC):
         Collects service_stub() declarations in order to
         connect to the services required before running the experiment
         """
-        inherited_stubs = dict(getattr(experiment_cls, "_stubs", {}))
+        inherited_stubs = dict(experiment_cls._stubs)
         for name, val in list(experiment_cls.__dict__.items()):
             if not isinstance(val, StubSpec):
                 continue
@@ -74,10 +77,29 @@ class Experiment(ABC):
 
             experiment_cls.shot = wrapped_shot
 
+    @classmethod
+    def parameters(cls) -> Mapping[str, ParamSpec[Any]]:
+        """Read-only view of this experiment's parameters."""
+        return MappingProxyType(cls._parameters)
+
+    @final
     async def connect(self, client: Any) -> None:
-        """Called once before running the experiment to connect to all required devices."""
+        """Connects to declared service stubs and sets them as attributes."""
         for attr_name, spec in type(self)._stubs.items():
             setattr(self, attr_name, await client.service(spec.service_name, spec.stub_class))
+
+    async def setup(self) -> None:  # noqa: B027
+        """Called once after stubs are connected, before the shot loop starts.
+
+        Implement to configure devices or open persistent streams.
+        """
+
+    async def teardown(self) -> None:  # noqa: B027
+        """Called once after the shot loop ends.
+
+        Implement to close persistent streams opened in setup(), or set devices
+        to rest state.
+        """
 
     @abstractmethod
     async def shot(self, ctx: "Context") -> pd.DataFrame: ...

@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from .parameters import ParamSpec
+from .parameters import ParameterError, ParamSpec
 
 
 @dataclass(frozen=True)
@@ -39,8 +39,6 @@ class Axis:
     def __post_init__(self) -> None:
         has_range = self.start is not None or self.stop is not None or self.steps is not None
         if self.explicit_values is not None:
-            if has_range:
-                raise ValueError("Cannot combine explicit_values with start/stop/steps")
             if len(self.explicit_values) == 0:
                 raise ValueError("explicit_values must not be empty")
         elif has_range:
@@ -89,6 +87,17 @@ class Axis:
             return self.param.choices  # type: ignore[return-value]
         return np.linspace(self.start, self.stop, self.steps)  # type: ignore[arg-type]
 
+    def validate_values(self) -> None:
+        """Validate every value this axis produces against the parameter spec.
+        Raises ``ParameterError`` on the first out-of-range or invalid value.
+        """
+        if self.explicit_values is None and self.start is not None:
+            values = (self.start, self.stop)  # only check high / low for linear sweep
+        else:
+            values = self.values
+        for value in values:
+            self.param.validate(value)
+
 
 class Scan:
     """N-dimensional scan with support for zipped groups.
@@ -99,24 +108,19 @@ class Scan:
     """
 
     def __init__(self, *axes: Axis, zipped_groups: set[str] | None = None):
-        if not axes:
-            raise ValueError("Scan requires at least one Axis")
+        assert axes, "Scan requires at least one Axis"
         self.axes = list(axes)
         self._zipped_groups = zipped_groups
 
     def __len__(self) -> int:
         return math.prod(self._group_length(g) for g in self._groups().values())
 
-    def validate_for(self, experiment_cls: type) -> None:
-        """Raise ValueError if any axis references a parameter that is not
-        declared on ``experiment_cls`` (identity check, inheritance-aware)."""
-        known = getattr(experiment_cls, "_parameters", {})
-        foreign = [ax.name for ax in self.axes if known.get(ax.name) is not ax.param]
-        if foreign:
-            raise ValueError(
-                f"Scan axes {foreign} are not parameters of {experiment_cls.__name__} "
-                f"(declared: {sorted(known)})"
-            )
+    def validate(self) -> None:
+        """Check that groups have the same length.
+        Raises ``ParameterError`` on mismatch.
+        """
+        for axes in self._groups().values():
+            self._group_length(axes)
 
     def points(self) -> Iterator[dict[str, Any]]:
         groups = self._groups()
@@ -127,13 +131,9 @@ class Scan:
                 merged.update(d)
             yield merged
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
     def _is_zipped(self, group: str) -> bool:
         if self._zipped_groups is None:
-            # Default: zip all declared groups
+            # zip groups by default
             return True
         return group in self._zipped_groups
 
@@ -160,7 +160,7 @@ class Scan:
         lengths = {len(ax) for ax in axes}
         if len(lengths) > 1:
             names = [ax.name for ax in axes]
-            raise ValueError(
+            raise ParameterError(
                 f"Grouped axes {names} have mismatched lengths: "
                 + ", ".join(f"{ax.name}={len(ax)}" for ax in axes)
             )

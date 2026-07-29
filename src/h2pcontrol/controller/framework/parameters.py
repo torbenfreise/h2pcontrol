@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from typing import Any, overload
 
 
+class ParameterError(ValueError):
+    """A parameter value is invalid or a parameter/scan combination is inconsistent."""
+
+
 @dataclass
 class ParamSpec[T]:
     """Typed experiment parameter, implemented as a data descriptor.
@@ -47,13 +51,16 @@ class ParamSpec[T]:
 
     def validate(self, value: Any) -> Any:
         if self.dtype is not None:
-            value = self._coerce(value, self.dtype)
+            try:
+                value = self._coerce(value, self.dtype)
+            except (ValueError, TypeError) as exc:
+                raise ParameterError(f"{self.name!r}: {exc}") from exc
         if self.choices is not None and value not in self.choices:
-            raise ValueError(f"{self.name!r}: {value!r} not in {self.choices}")
+            raise ParameterError(f"{self.name!r}: {value!r} not in {self.choices}")
         if self.low is not None and value < self.low:
-            raise ValueError(f"{self.name!r}: {value} < min={self.low}")
+            raise ParameterError(f"{self.name!r}: {value} < min={self.low}")
         if self.high is not None and value > self.high:
-            raise ValueError(f"{self.name!r}: {value} > max={self.high}")
+            raise ParameterError(f"{self.name!r}: {value} > max={self.high}")
         return value
 
     def _coerce(self, value: Any, t: type) -> Any:
