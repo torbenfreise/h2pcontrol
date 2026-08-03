@@ -22,4 +22,7 @@ class ExampleExperiment(Experiment):
             signal = math.copysign(self.amplitude, phase)
         else:
             signal = self.amplitude * phase
+        # self.logger is named "experiment.<name>", so this shows up in the log
+        # dock attributed to this experiment.
+        self.logger.info("shot %d: %s = %.3f V", ctx.shot_idx, self.waveform, signal)
         return pd.DataFrame({"t": [t], "signal": [signal]})

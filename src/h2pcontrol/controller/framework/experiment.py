@@ -1,3 +1,4 @@
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -76,6 +77,15 @@ class Experiment(ABC):
                 return pd.concat([result, parameters], axis=1)
 
             experiment_cls.shot = wrapped_shot
+
+    @property
+    def logger(self) -> logging.Logger:
+        """Logger for experiment code.
+
+        Named ``experiment.<name>`` so the log aggregator can attribute
+        logs correctly.
+        """
+        return logging.getLogger(f"experiment.{self.name or type(self).__name__}")
 
     @classmethod
     def parameters(cls) -> Mapping[str, ParamSpec[Any]]:

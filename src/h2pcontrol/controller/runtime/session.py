@@ -2,6 +2,7 @@ import hashlib
 import logging
 import sys
 import types
+from collections.abc import Callable
 from pathlib import Path
 
 from h2pcontrol.sdk.client import Client
@@ -9,6 +10,10 @@ from h2pcontrol.sdk.client import Client
 from ..framework.experiment import Experiment
 
 logger = logging.getLogger(__name__)
+
+
+type ClientProvider = Callable[[], Client]
+"""A callable yielding the current manager client."""
 
 
 class Session:
