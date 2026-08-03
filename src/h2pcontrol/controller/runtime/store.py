@@ -8,8 +8,16 @@ Layout: one file per run
                                        create(attrs=…) — the metadata from
                                        run_metadata() (h2pcontrol_version,
                                        python_version, experiment_source) and run_id
-        /data                        — Table with one row per shot (scalars)
-        /traces/shot_00000/<column>  — array dataset per trace / image
+        /data                        — Table of scalar rows. One row per shot in
+                                       the common case; a shot returning a
+                                       multi-row frame (e.g. one row per hardware
+                                       trigger) appends all rows, sharing shot_idx
+        /traces/shot_00000/<column>  — array dataset per trace / image, always
+                                       stacked to shape (n_rows, …). Axis 0 is
+                                       unconditionally the row axis, so a 1-row
+                                       shot storing a (4, 250) multichannel trace
+                                       is (1, 4, 250) and is not confusable with a
+                                       4-row shot of (250,) traces
 
 The file is kept open during a run and flushed after every shot.
 """
@@ -90,11 +98,21 @@ class RunStore:
     def save_shot(self, shot_idx: int, frame: pd.DataFrame) -> None:
         """Append one shot's scalars to the data table; write arrays as datasets."""
         flat = self._flatten(frame)
+        if len(flat) == 0:
+            raise ValueError(f"Shot {shot_idx}: empty DataFrame")
 
         arrays: dict[str, np.ndarray] = {}
         for col in list(flat.columns):
             if _is_array(flat[col].iloc[0]):
-                arrays[col] = np.asarray(flat[col].iloc[0])
+                values = [np.asarray(v) for v in flat[col]]
+                shapes = {v.shape for v in values}
+                if len(shapes) > 1:
+                    raise ValueError(
+                        f"Shot {shot_idx} column {col!r}: array shapes differ across "
+                        f"rows ({sorted(shapes)}) — all rows in a shot must carry "
+                        "equal-shape arrays"
+                    )
+                arrays[col] = np.stack(values)
         if arrays:
             flat = flat.drop(columns=list(arrays))
 
@@ -127,10 +145,11 @@ class RunStore:
                 )
 
         row = table.row
-        row["shot_idx"] = shot_idx
-        for col in flat.columns:
-            row[col] = flat[col].iloc[0]
-        row.append()
+        for i in range(len(flat)):
+            row["shot_idx"] = shot_idx
+            for col in flat.columns:
+                row[col] = flat[col].iloc[i]
+            row.append()
         table.flush()
 
         # Write trace / image arrays

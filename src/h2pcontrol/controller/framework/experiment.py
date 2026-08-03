@@ -71,7 +71,10 @@ class Experiment(ABC):
 
             async def wrapped_shot(self, ctx, _orig=original):
                 result = await _orig(self, ctx)
-                parameters = pd.DataFrame({k: [getattr(self, k)] for k in self._parameters})
+                parameters = pd.DataFrame(
+                    {k: [getattr(self, k)] * len(result) for k in self._parameters},
+                    index=result.index,
+                )
                 result.columns = pd.MultiIndex.from_product([["result"], result.columns])
                 parameters.columns = pd.MultiIndex.from_product([["params"], parameters.columns])
                 return pd.concat([result, parameters], axis=1)

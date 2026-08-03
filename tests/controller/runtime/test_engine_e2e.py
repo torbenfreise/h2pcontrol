@@ -74,8 +74,8 @@ class TestEndToEnd:
             assert "result_peak" in table.colnames
 
             assert hasattr(h5.root, "traces")
-            assert h5.root.traces.shot_00000.result_time.shape == (100,)
-            assert h5.root.traces.shot_00000.result_signal.shape == (100,)
+            assert h5.root.traces.shot_00000.result_time.shape == (1, 100)
+            assert h5.root.traces.shot_00000.result_signal.shape == (1, 100)
 
             attrs = h5.root._v_attrs
             assert attrs["experiment_source"] == source

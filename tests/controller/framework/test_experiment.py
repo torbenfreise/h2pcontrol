@@ -91,6 +91,39 @@ async def test_shot_wrapping_adds_params_and_preserves_results():
     assert df[("params", "count")].iloc[0] == 10
 
 
+@pytest.mark.asyncio
+async def test_shot_wrapping_broadcasts_params_over_all_rows():
+    # A shot may return one row per hardware trigger; every row must carry
+    # the full parameter set (no NaN padding on rows past the first).
+    class BatchedExperiment(Experiment):
+        voltage = param(3.3, min=0.0, max=5.0, unit="V")
+
+        async def shot(self, ctx: Context) -> pd.DataFrame:
+            return pd.DataFrame({"rep": range(5), "reading": [0.1, 0.2, 0.3, 0.4, 0.5]})
+
+    df = await BatchedExperiment().shot(Context(shot_idx=0))
+
+    assert len(df) == 5
+    assert list(df[("params", "voltage")]) == [3.3] * 5
+    assert not df.isna().any().any()
+
+
+@pytest.mark.asyncio
+async def test_shot_wrapping_broadcasts_params_with_custom_index():
+    # Broadcasting must align even when the user returns a non-default index.
+    class CustomIndexExperiment(Experiment):
+        voltage = param(3.3, min=0.0, max=5.0, unit="V")
+
+        async def shot(self, ctx: Context) -> pd.DataFrame:
+            return pd.DataFrame({"reading": [1.0, 2.0, 3.0]}, index=[10, 20, 30])
+
+    df = await CustomIndexExperiment().shot(Context(shot_idx=0))
+
+    assert list(df.index) == [10, 20, 30]
+    assert list(df[("params", "voltage")]) == [3.3] * 3
+    assert not df.isna().any().any()
+
+
 # ---------------------------------------------------------------------------
 # Context
 # ---------------------------------------------------------------------------
