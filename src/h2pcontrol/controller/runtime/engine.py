@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Protocol
 
 import pandas as pd
-from h2pcontrol.sdk.client import Client
 
 from ..framework.experiment import Context, Experiment
 from .events import (
@@ -36,6 +35,7 @@ from .events import (
     ShotCompleted,
     StateChanged,
 )
+from .session import ClientProvider
 from .spec import RunRequest
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,7 @@ class ResultSink(Protocol):
     def close(self) -> None: ...
 
 
-# type aliases so Engine.__initi(() has a nicer function signature
-type ClientProvider = Callable[[], Client]
+# type aliases so Engine.__init__() has a nicer function signature
 type SinkFactory = Callable[[RunRequest, RunId], ResultSink]
 type Loader = Callable[[str, Path], type[Experiment]]
 

@@ -9,10 +9,14 @@ from h2pcontrol.controller.ui.main_window import MainWindow
 
 
 def main() -> None:
+    # Set root to DEBUG so dock can show DEBUG records.
+    # console logger stays at INFO so stderr isn't flooded.
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.DEBUG,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
+    for handler in logging.getLogger().handlers:
+        handler.setLevel(logging.INFO)
 
     app = QApplication(sys.argv)
     loop = qasync.QEventLoop(app)

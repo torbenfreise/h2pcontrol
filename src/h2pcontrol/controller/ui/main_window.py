@@ -22,18 +22,18 @@ from ..runtime.events import (
     EntryState,
     RunFinished,
     RunStarted,
-    ShotCompleted,
 )
+from ..runtime.log_aggregator import LogAggregator
 from ..runtime.run_metadata import run_metadata
 from ..runtime.session import Session
 from ..runtime.spec import RunRequest
 from ..runtime.store import RunStore
 from .engine_bridge import EngineBridge
 from .experiment_panel import ExperimentPanel
+from .log_dock import LogDock
 from .run_controls import RunControls
 from .schedule_dock import ScheduleDock
 from .settings_dialog import SettingsDialog
-from .shot_dock import ShotDock, format_shot_line
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +53,14 @@ class MainWindow(QMainWindow):
         # Source code snapshot captured at File -> Open
         self._source: str = ""
 
-        # Engine
         self._engine = RunEngine(
             client_provider=lambda: self._session.client,
             sink_factory=self._make_sink,
             loader=self._session.load_experiment_from_source,
         )
         self._bridge = EngineBridge(self._engine, self)
+
+        self._log_aggregator = LogAggregator(client_provider=lambda: self._session.client)
 
         self._build_menu()
         self._build_central()
@@ -74,6 +75,9 @@ class MainWindow(QMainWindow):
         self._ping_timer.timeout.connect(self._schedule_ping)
         self._ping_timer.start(10_000)
         self._schedule_ping()
+
+        # defer until qasync loop has started.
+        QTimer.singleShot(0, self._log_aggregator.start)
 
     def _build_menu(self) -> None:
         menubar = self.menuBar()
@@ -104,16 +108,16 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
     def _build_docks(self) -> None:
-        self._shot_dock = ShotDock(self)
+        self._log_dock = LogDock(self)
+        self._log_aggregator.subscribe(self._log_dock.append_record)
         self._schedule_dock = ScheduleDock(self._engine, self._bridge, self)
 
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._shot_dock)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._log_dock)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._schedule_dock)
-        self.tabifyDockWidget(self._shot_dock, self._schedule_dock)
-        self._shot_dock.raise_()
+        self.tabifyDockWidget(self._log_dock, self._schedule_dock)
+        self._log_dock.raise_()
 
-        # Window menu: toggle actions for each dock
-        self._window_menu.addAction(self._shot_dock.toggleViewAction())
+        self._window_menu.addAction(self._log_dock.toggleViewAction())
         self._window_menu.addAction(self._schedule_dock.toggleViewAction())
 
     def _build_status_bar(self) -> None:
@@ -128,16 +132,11 @@ class MainWindow(QMainWindow):
         self._experiment_panel.scan_changed.connect(self._on_scan_changed)
 
         self._bridge.run_started.connect(self._on_run_started)
-        self._bridge.shot_completed.connect(self._on_shot_completed)
         self._bridge.run_finished.connect(self._on_run_finished)
-
-    # --- Sink factory ---
 
     def _make_sink(self, request: RunRequest, run_id: str) -> RunStore:
         metadata = run_metadata(request) | {"run_id": run_id}
         return RunStore.create(self._results_root, request.experiment_name, attrs=metadata)
-
-    # --- Actions ---
 
     def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
         task = asyncio.ensure_future(coro)
@@ -163,9 +162,6 @@ class MainWindow(QMainWindow):
 
     def _load_path(self, path: str) -> None:
         try:
-            # The one place the experiment file is read from disk.  The captured
-            # text drives both the parameter panel and every future RunRequest,
-            # so editing the file has no effect until File\u2192Open is done again.
             source = Path(path).read_text(encoding="utf-8")
             cls = self._session.load_experiment_from_source(source, path)
             self._experiment_panel.load_experiment(cls)
@@ -202,31 +198,18 @@ class MainWindow(QMainWindow):
         except ParameterError as exc:
             QMessageBox.warning(self, "Invalid Parameters", str(exc))
 
-    # --- Bridge event handlers ---
-
     def _on_run_started(self, event: RunStarted) -> None:
-        self._shot_dock.clear()
-        # Run number is the trailing digits of the result file stem (e.g. Sine_0042).
-        run_no = event.result_path.stem.rsplit("_", 1)[-1]
-        self._shot_dock.append(f"Run {run_no} \u2192 {event.result_path}")
-
-    def _on_shot_completed(self, event: ShotCompleted) -> None:
-        self._shot_dock.append(format_shot_line(event.shot_idx, event.total_shots, event.frame))
+        logger.info("Run %s started \u2192 %s", event.run_id, event.result_path)
 
     def _on_run_finished(self, event: RunFinished) -> None:
         if event.outcome == EntryState.COMPLETED:
-            self._shot_dock.append("Completed")
+            logger.info("Run %s completed", event.run_id)
         elif event.outcome == EntryState.STOPPED:
-            self._shot_dock.append("Stopped")
+            logger.info("Run %s stopped", event.run_id)
         elif event.outcome == EntryState.FAILED:
-            self._shot_dock.append(f"Error: {event.error}")
-            # Defer the modal: this handler runs inside the engine's emit stack,
-            # and a modal here would spin a nested loop under a subscriber (and
-            # stack one dialog per failed queued run).
+            logger.error("Run %s failed: %s", event.run_id, event.error)
             message = event.error or "Unknown error"
             QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Run Failed", message))
-
-    # --- Settings ---
 
     def _on_settings(self) -> None:
         dlg = SettingsDialog(self._session.manager_address, self._results_root, self)
@@ -241,12 +224,10 @@ class MainWindow(QMainWindow):
         await self._session.set_manager_address(address)
         await self._ping()
 
-    # --- Lifecycle ---
-
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self._bridge.close()
-        # Fire-and-forget engine shutdown
-        task = asyncio.ensure_future(self._engine.aclose())
-        self._bg_tasks.add(task)
-        task.add_done_callback(self._bg_tasks.discard)
+        for coro in (self._engine.aclose(), self._log_aggregator.aclose()):
+            task = asyncio.ensure_future(coro)
+            self._bg_tasks.add(task)
+            task.add_done_callback(self._bg_tasks.discard)
         super().closeEvent(event)

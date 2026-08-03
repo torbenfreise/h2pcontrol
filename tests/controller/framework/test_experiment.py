@@ -147,6 +147,26 @@ def test_parameters_includes_inherited():
 
 
 # ---------------------------------------------------------------------------
+# logger property
+# ---------------------------------------------------------------------------
+
+
+def test_logger_uses_class_name_when_name_unset():
+    exp = SimpleExperiment()
+    assert exp.logger.name == "experiment.SimpleExperiment"
+
+
+def test_logger_uses_name_when_set():
+    class Named(Experiment):
+        name = "Rabi"
+
+        async def shot(self, ctx: Context) -> pd.DataFrame:
+            return pd.DataFrame({"x": [0.0]})
+
+    assert Named().logger.name == "experiment.Rabi"
+
+
+# ---------------------------------------------------------------------------
 # ParameterError
 # ---------------------------------------------------------------------------
 
