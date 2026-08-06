@@ -35,8 +35,8 @@ def _column(frame: pd.DataFrame, spec: ResultSpec | ParamSpec) -> list:
 
 
 def _join_rows(arrays: list) -> np.ndarray:
-    """Concatenate per-row arrays into one curve, separated by blank space. """
-    separator = np.array([np.nan]) # NaN stops pyqt from joining points.
+    """Concatenate per-row arrays into one curve, separated by blank space."""
+    separator = np.array([np.nan])  # NaN stops pyqt from joining points.
     parts: list[np.ndarray] = []
     for array in arrays:
         parts.append(np.asarray(array, dtype=float))
