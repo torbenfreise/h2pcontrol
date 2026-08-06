@@ -15,7 +15,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from h2pcontrol.controller.framework.experiment import Experiment
+from h2pcontrol.controller.framework.experiment import Context, Experiment
+from h2pcontrol.controller.framework.results import result
 from h2pcontrol.controller.runtime.events import (
     EngineEvent,
     EngineState,
@@ -637,3 +638,30 @@ class TestAclose:
         engine = make_engine(probe.loader)
         await engine.aclose()
         await engine.aclose()
+
+
+class TestPlots:
+    async def test_run_started_carries_declared_plots(self, make_engine, make_request, wait_for):
+        class PlotExp(Experiment):
+            name = "PlotExp"
+            xr = result(float, unit="s")
+            yr = result(float, unit="V")
+
+            async def setup(self) -> None:
+                self.plot(self.yr, x=self.xr, title="P")
+
+            async def shot(self, ctx: Context) -> pd.DataFrame:
+                return pd.DataFrame({"xr": [0.0], "yr": [1.0]})
+
+        def loader(_source: str, _path: Path) -> type[Experiment]:
+            return PlotExp
+
+        engine = make_engine(loader)
+        engine.submit(make_request(repeats=1))
+        started = await wait_for(engine, RunStarted)
+
+        assert len(started.plots) == 1
+        spec = started.plots[0]
+        assert spec.ys == (PlotExp.yr,)
+        assert spec.x is PlotExp.xr
+        assert spec.title == "P"
