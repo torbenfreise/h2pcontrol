@@ -22,12 +22,13 @@
 | src/h2pcontrol/controller/ui/\_\_init\_\_.py         |        0 |        0 |        0 |        0 |    100% |           |
 | src/h2pcontrol/controller/ui/engine\_bridge.py       |       30 |        0 |       12 |        1 |     98% | 43-\>exit |
 | src/h2pcontrol/controller/ui/experiment\_panel.py    |      301 |       51 |       70 |        6 |     82% |49, 53, 57, 78, 122-124, 249, 256-277, 280-282, 285, 288, 291, 298-304, 307-312, 315, 318, 321, 352, 355, 445 |
+| src/h2pcontrol/controller/ui/experiment\_view.py     |       19 |       19 |        0 |        0 |      0% |      1-30 |
 | src/h2pcontrol/controller/ui/log\_dock.py            |      189 |        3 |       32 |        4 |     97% |199, 210, 216, 330-\>exit |
-| src/h2pcontrol/controller/ui/main\_window.py         |      164 |      164 |       16 |        0 |      0% |     1-233 |
+| src/h2pcontrol/controller/ui/main\_window.py         |      160 |      160 |       16 |        0 |      0% |     1-224 |
 | src/h2pcontrol/controller/ui/run\_controls.py        |       44 |        0 |        2 |        0 |    100% |           |
 | src/h2pcontrol/controller/ui/schedule\_dock.py       |      164 |       19 |       42 |        6 |     85% |48, 112-113, 121, 140-143, 167, 171, 180-\>178, 182-\>178, 202-206, 246-249 |
 | src/h2pcontrol/controller/ui/settings\_dialog.py     |       35 |       35 |        2 |        0 |      0% |      1-58 |
-| **TOTAL**                                            | **1747** |  **321** |  **362** |   **29** | **82%** |           |
+| **TOTAL**                                            | **1762** |  **336** |  **362** |   **29** | **81%** |           |
 
 
 ## Setup coverage badge
