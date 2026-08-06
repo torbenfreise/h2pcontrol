@@ -7,7 +7,7 @@ from .run_controls import RunControls
 
 
 class ExperimentView(QWidget):
-    """Central widget: Experiment name header, parameter panel, and run controls. """
+    """Central widget: Experiment name header, parameter panel, and run controls."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)

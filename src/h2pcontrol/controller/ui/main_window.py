@@ -29,6 +29,7 @@ from ..runtime.store import RunStore
 from .engine_bridge import EngineBridge
 from .experiment_view import ExperimentView
 from .log_dock import LogDock
+from .plot_dock import PlotDock
 from .schedule_dock import ScheduleDock
 from .settings_dialog import SettingsDialog
 
@@ -99,6 +100,11 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._experiment_view)
 
     def _build_docks(self) -> None:
+        # Plot dock opens to the right of the experiment view when a run declares plots.
+        self._plot_dock = PlotDock(self._bridge, self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._plot_dock)
+        self._plot_dock.hide()
+
         self._log_dock = LogDock(self)
         self._log_aggregator.subscribe(self._log_dock.append_record)
         self._schedule_dock = ScheduleDock(self._engine, self._bridge, self)
@@ -108,6 +114,9 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self._log_dock, self._schedule_dock)
         self._log_dock.raise_()
 
+        self.resizeDocks([self._plot_dock], [600], Qt.Orientation.Horizontal)
+
+        self._window_menu.addAction(self._plot_dock.toggleViewAction())
         self._window_menu.addAction(self._log_dock.toggleViewAction())
         self._window_menu.addAction(self._schedule_dock.toggleViewAction())
 

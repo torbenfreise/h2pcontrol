@@ -240,6 +240,7 @@ class RunEngine:
             # Stage 4: Run user-defined setup
             stage = "setup failed"
             await experiment.setup()
+            plots = experiment.plots()
 
             # Stage 5: Create data sink
             stage = "data sink failed"
@@ -256,7 +257,14 @@ class RunEngine:
             else:
                 total_shots = None
 
-            self._emit(RunStarted(run_id=run_id, total_shots=total_shots, result_path=sink.path))
+            self._emit(
+                RunStarted(
+                    run_id=run_id,
+                    total_shots=total_shots,
+                    result_path=sink.path,
+                    plots=plots,
+                )
+            )
 
             # Stage 7: Shot loop
             shot_idx = 0
