@@ -12,8 +12,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QStatusBar,
-    QVBoxLayout,
-    QWidget,
 )
 
 from ..framework.parameters import ParameterError
@@ -29,9 +27,8 @@ from ..runtime.session import Session
 from ..runtime.spec import RunRequest
 from ..runtime.store import RunStore
 from .engine_bridge import EngineBridge
-from .experiment_panel import ExperimentPanel
+from .experiment_view import ExperimentView
 from .log_dock import LogDock
-from .run_controls import RunControls
 from .schedule_dock import ScheduleDock
 from .settings_dialog import SettingsDialog
 
@@ -96,16 +93,10 @@ class MainWindow(QMainWindow):
         self._window_menu = menubar.addMenu("Window")
 
     def _build_central(self) -> None:
-        central = QWidget()
-        layout = QVBoxLayout(central)
-
-        self._experiment_panel = ExperimentPanel()
-        layout.addWidget(self._experiment_panel, stretch=1)
-
-        self._run_controls = RunControls()
-        layout.addWidget(self._run_controls)
-
-        self.setCentralWidget(central)
+        self._experiment_view = ExperimentView(self)
+        self._experiment_panel = self._experiment_view.panel
+        self._run_controls = self._experiment_view.controls
+        self.setCentralWidget(self._experiment_view)
 
     def _build_docks(self) -> None:
         self._log_dock = LogDock(self)
@@ -168,7 +159,7 @@ class MainWindow(QMainWindow):
             self._experiment_path = Path(path)
             self._experiment_name = cls.name or cls.__name__
             self._source = source
-            self.setWindowTitle(f"h2pcontrol \u2014 {self._experiment_name}")
+            self._experiment_view.set_experiment_name(self._experiment_name)
             self._run_controls.set_loaded(True)
         except Exception as exc:
             logger.exception("Failed to load experiment")
