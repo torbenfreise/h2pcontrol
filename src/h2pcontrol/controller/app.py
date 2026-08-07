@@ -1,3 +1,10 @@
+# pandas must be imported before PySide6. PySide6 installs an import hook for
+# its ``__feature__`` support that runs inspect.getsource() over every module
+# imported afterwards; six.moves (pulled in via pandas -> dateutil) is a
+# synthetic module that has no source, so the hook dies with
+# "AttributeError: '_SixMetaPathImporter' object has no attribute '_path'".
+import pandas  # noqa: F401  # isort: skip
+
 import asyncio
 import logging
 import sys

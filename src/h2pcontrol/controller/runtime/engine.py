@@ -12,16 +12,25 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib.metadata
 import itertools
+import json
 import logging
+import platform
+import socket
+import subprocess
+import sys
+import time
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import pandas as pd
 
 from ..framework.experiment import Context, Experiment
+from ..framework.timing import ShotTimings
 from .events import (
     EngineEvent,
     EngineState,
@@ -35,11 +44,62 @@ from .events import (
     ShotCompleted,
     StateChanged,
 )
+from .rpc_instrumentation import InstrumentedClient, RpcLog
 from .session import ClientProvider
 from .spec import RunRequest
 from .store import RunSchema
 
 logger = logging.getLogger(__name__)
+
+
+def _repo_root() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / ".git").exists():
+            return parent
+    return None
+
+
+def _run_metadata() -> dict[str, Any]:
+    """Provenance for a run's timing logs: interpreter, OS, host, git state."""
+    meta: dict[str, Any] = {
+        "written_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "python": sys.version,
+        "platform": platform.platform(),
+        "hostname": socket.gethostname(),
+    }
+    with contextlib.suppress(importlib.metadata.PackageNotFoundError):
+        meta["h2pcontrol_version"] = importlib.metadata.version("h2pcontrol")
+    root = _repo_root()
+    if root is not None:
+        try:
+            git = ["git", "-C", str(root)]
+            meta["git_commit"] = subprocess.run(
+                [*git, "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+            ).stdout.strip()
+            meta["git_dirty"] = bool(
+                subprocess.run(
+                    [*git, "status", "--porcelain"], capture_output=True, text=True, check=True
+                ).stdout.strip()
+            )
+        except (OSError, subprocess.CalledProcessError):
+            logger.warning("could not record git state for timing logs")
+    return meta
+
+
+def _write_timing_logs(
+    result_path: Path,
+    timing_rows: list[dict[str, float]],
+    rpc_records: list[dict[str, Any]],
+) -> None:
+    """Write per-shot timings, the RPC log, and a provenance sidecar next to the result file."""
+    stem = result_path.with_suffix("")
+    if timing_rows:
+        pd.DataFrame(timing_rows).to_csv(f"{stem}_timings.csv", index=False)
+    if rpc_records:
+        pd.DataFrame(rpc_records).to_csv(f"{stem}_rpc.csv", index=False)
+    with open(f"{stem}_meta.json", "w", encoding="utf-8") as f:
+        json.dump(_run_metadata(), f, indent=2)
+
 
 _TERMINAL = (
     EntryState.COMPLETED,
@@ -59,6 +119,67 @@ class ResultSink(Protocol):
 # type aliases so Engine.__init__() has a nicer function signature
 type SinkFactory = Callable[[RunRequest, RunId, RunSchema], ResultSink]
 type Loader = Callable[[str, Path], type[Experiment]]
+
+
+class _BackgroundSaver:
+    """Writes shots on a background task so acquiring the next shot overlaps
+    persisting the previous one.
+
+    A single writer task drains a bounded queue, calling ``sink.save_shot`` in
+    a thread executor one shot at a time — the sink is a single-writer HDF5
+    file, so saves must stay ordered and never overlap each other (or
+    ``sink.close``). The bound is backpressure: ``save`` blocks once ``maxsize``
+    shots are still unwritten, so a slow disk throttles acquisition instead of
+    growing memory without limit. The first write error is re-raised from
+    ``save`` or ``aclose`` so a failed write fails the run as a serial save did.
+    """
+
+    def __init__(
+        self,
+        sink: ResultSink,
+        loop: asyncio.AbstractEventLoop,
+        maxsize: int = 4,
+    ) -> None:
+        self._sink = sink
+        self._loop = loop
+        self._queue: asyncio.Queue[tuple[int, pd.DataFrame]] = asyncio.Queue(maxsize)
+        self._error: BaseException | None = None
+        self._task = loop.create_task(self._drain())
+
+    async def _drain(self) -> None:
+        while True:
+            shot_idx, frame = await self._queue.get()
+            try:
+                # Once a write has failed, keep draining without saving so the
+                # queue empties (producers unblock) and ``aclose`` can join.
+                if self._error is None:
+                    await self._loop.run_in_executor(None, self._sink.save_shot, shot_idx, frame)
+            except Exception as exc:  # surfaced to the run via save()/aclose()
+                self._error = exc
+            finally:
+                self._queue.task_done()
+
+    async def save(self, shot_idx: int, frame: pd.DataFrame) -> None:
+        """Queue a shot for writing, blocking while the buffer is full.
+
+        Re-raises the first background write error, if one has occurred.
+        """
+        if self._error is not None:
+            raise self._error
+        await self._queue.put((shot_idx, frame))
+
+    async def aclose(self) -> None:
+        """Flush queued writes, stop the writer, and re-raise the first error.
+
+        Returns only once the writer is idle, so it is safe to close the sink
+        afterwards.
+        """
+        await self._queue.join()  # all queued writes done; writer idle on get()
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+        if self._error is not None:
+            raise self._error
 
 
 class _Entry:
@@ -210,12 +331,18 @@ class RunEngine:
         self._emit(self._queue_changed())
 
         sink: ResultSink | None = None
+        saver: _BackgroundSaver | None = None
         experiment: Experiment | None = None
         shots_completed = 0
         outcome = EntryState.COMPLETED
         error_msg: str | None = None
         stage = "load failed"
         loop = asyncio.get_running_loop()
+
+        # Per-run instrumentation: phase spans per shot + a log of every RPC.
+        # Both are written as CSVs next to the result file when the run ends.
+        rpc_log = RpcLog()
+        timing_rows: list[dict[str, float]] = []
 
         try:
             # Stage 1: Compile the source snapshot into an Experiment class
@@ -234,9 +361,9 @@ class RunEngine:
             # Resolve scan (to_scan resolves each axis against cls)
             scan = request.scan.to_scan(cls) if request.scan else None
 
-            # Stage 3: Connect to service stubs
+            # Stage 3: Connect to service stubs (wrapped so every RPC is timed)
             stage = "connect failed"
-            await experiment.connect(self._client_provider())
+            await experiment.connect(InstrumentedClient(self._client_provider(), rpc_log))
 
             # Stage 4: Run user-defined setup
             stage = "setup failed"
@@ -252,6 +379,7 @@ class RunEngine:
             )
             new_sink = await loop.run_in_executor(None, self._sink_factory, request, run_id, schema)
             sink = new_sink
+            saver = _BackgroundSaver(sink, loop)
 
             # Stage 6: Compute shots and emit RunStarted
             points = list(scan.points()) if scan else [{}]
@@ -280,19 +408,44 @@ class RunEngine:
                     for param_name, value in point.items():
                         setattr(experiment, param_name, value)
                     for _ in range(repeats):
-                        ctx = Context(shot_idx=shot_idx, run_id=run_id, total_shots=total_shots)
+                        timings = ShotTimings()
+                        rpc_log.shot_idx = shot_idx
+                        ctx = Context(
+                            shot_idx=shot_idx,
+                            run_id=run_id,
+                            total_shots=total_shots,
+                            timings=timings,
+                        )
                         stage = "shot failed"
-                        frame = await experiment.record(ctx)
+                        with timings.span("shot"):
+                            frame = await experiment.record(ctx)
                         stage = "saving shot failed"
-                        await loop.run_in_executor(None, sink.save_shot, shot_idx, frame)
+                        # Hand the frame to the background writer and move on;
+                        # the actual write overlaps the next shot. This span now
+                        # measures only enqueue time — nonzero means backpressure
+                        # (writes falling behind acquisition), not write cost.
+                        with timings.span("save"):
+                            await saver.save(shot_idx, frame)
                         shots_completed += 1
-                        self._emit(
-                            ShotCompleted(
-                                run_id=run_id,
-                                shot_idx=shot_idx,
-                                total_shots=total_shots,
-                                frame=frame,
+                        # Subscribers run synchronously, so with direct Qt
+                        # connections this span includes UI/plot updates.
+                        with timings.span("emit"):
+                            self._emit(
+                                ShotCompleted(
+                                    run_id=run_id,
+                                    shot_idx=shot_idx,
+                                    total_shots=total_shots,
+                                    frame=frame,
+                                )
                             )
+                        timing_rows.append(
+                            {
+                                "shot_idx": shot_idx,
+                                # Monotonic timestamp; shot periods are diffs
+                                # of t_mono. Absolute time is in _meta.json.
+                                "t_mono": time.perf_counter(),
+                                **timings.as_row(),
+                            }
                         )
                         shot_idx += 1
 
@@ -308,6 +461,7 @@ class RunEngine:
             error_msg = f"{stage}: {exc}"
             logger.exception("Run failed (%s)", stage, extra={"run_id": run_id})
         finally:
+            rpc_log.shot_idx = -1  # teardown RPCs are not part of any shot
             if experiment is not None:
                 try:
                     await asyncio.shield(
@@ -318,6 +472,21 @@ class RunEngine:
                 except Exception:
                     logger.exception("teardown() raised", extra={"run_id": run_id})
 
+            # Flush pending background writes before closing the sink: the
+            # writer and sink.close() share one HDF5 handle and must not overlap.
+            if saver is not None:
+                try:
+                    await asyncio.shield(saver.aclose())
+                except asyncio.CancelledError:
+                    logger.warning(
+                        "background save flush interrupted by shutdown", extra={"run_id": run_id}
+                    )
+                except Exception as exc:
+                    if outcome == EntryState.COMPLETED:
+                        outcome = EntryState.FAILED
+                        error_msg = f"saving shot failed: {exc}"
+                        logger.exception("background save failed", extra={"run_id": run_id})
+
             if sink is not None:
                 try:
                     await asyncio.shield(loop.run_in_executor(None, sink.close))
@@ -325,6 +494,20 @@ class RunEngine:
                     logger.warning("sink close interrupted by shutdown", extra={"run_id": run_id})
                 except Exception:
                     logger.exception("sink.close() raised", extra={"run_id": run_id})
+
+            if sink is not None and (timing_rows or rpc_log.records):
+                try:
+                    await asyncio.shield(
+                        loop.run_in_executor(
+                            None, _write_timing_logs, sink.path, timing_rows, rpc_log.records
+                        )
+                    )
+                except asyncio.CancelledError:
+                    logger.warning(
+                        "timing log write interrupted by shutdown", extra={"run_id": run_id}
+                    )
+                except Exception:
+                    logger.exception("writing timing logs failed", extra={"run_id": run_id})
 
             entry.state = outcome
             self._emit(

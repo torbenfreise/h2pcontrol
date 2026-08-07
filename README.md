@@ -7,6 +7,11 @@ with the [h2pmanager](https://github.com/torbenfreise/h2pcontrol-manager) regist
 the [h2pcontrol-sdk](https://github.com/torbenfreise/h2pcontrol-sdk) client/server SDK,
 and device service implementations (MCC DAQ, Picoscope, PulseBlaster, etc.).
 
+> **Note — `profiling` branch:** this branch carries per-shot timing
+> instrumentation and the measurement data used for the performance analysis
+> in the thesis. It is frozen as evidence and not meant to be merged.
+> See [PROFILING.md](PROFILING.md) for methodology and how to reproduce.
+
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (Python package manager)

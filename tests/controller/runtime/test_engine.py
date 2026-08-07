@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import textwrap
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -671,3 +672,106 @@ class TestViews:
         assert handle.spec.title == "P"
         assert handle.spec.unit == "V"
         assert handle.spec.kind is ViewKind.SERIES
+
+
+# ---------------------------------------------------------------------------
+# Background save (writes overlap the next shot's acquisition)
+# ---------------------------------------------------------------------------
+
+
+class _GatedSink:
+    """Sink whose save_shot blocks on a threading gate, to observe overlap."""
+
+    def __init__(self, gate: threading.Event) -> None:
+        self.path = Path("/tmp/gated_run.h5")
+        self.shots: list[tuple[int, pd.DataFrame]] = []
+        self.closed = False
+        self._gate = gate
+
+    def save_shot(self, shot_idx: int, frame: pd.DataFrame) -> None:
+        self._gate.wait()
+        self.shots.append((shot_idx, frame))
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FailingSink:
+    """Sink whose save_shot always raises, to check error surfacing."""
+
+    def __init__(self) -> None:
+        self.path = Path("/tmp/failing_run.h5")
+        self.closed = False
+
+    def save_shot(self, shot_idx: int, frame: pd.DataFrame) -> None:
+        raise RuntimeError("disk full")
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class TestBackgroundSave:
+    async def test_shots_saved_in_order(
+        self, experiment_factory, make_engine, make_request, sinks, wait_for
+    ):
+        """Every shot is persisted, in order, by the single background writer."""
+        probe = experiment_factory()
+        engine = make_engine(probe.loader)
+
+        engine.submit(make_request(repeats=5))
+        finished = await wait_for(engine, RunFinished)
+
+        assert finished.outcome == EntryState.COMPLETED
+        assert [idx for idx, _ in sinks[0].shots] == [0, 1, 2, 3, 4]
+        assert sinks[0].closed
+
+    async def test_writes_overlap_acquisition(
+        self, experiment_factory, make_engine, make_request, wait_for
+    ):
+        """Acquisition and shot events proceed while a write is still in flight."""
+        gate = threading.Event()
+        sink = _GatedSink(gate)
+
+        def factory(_request, _run_id, _schema):
+            return sink
+
+        probe = experiment_factory()
+        engine = make_engine(probe.loader, sink=factory)
+
+        try:
+            engine.submit(make_request(repeats=1, scan_repeats=None))  # runs until stopped
+            # Two shots complete (acquired + emitted) though no write has landed:
+            # the writer is parked in the gated save_shot of the first shot.
+            await wait_for(engine, ShotCompleted, count=2)
+            assert sink.shots == []
+        finally:
+            gate.set()
+
+        engine.stop_current()
+        finished = await wait_for(engine, RunFinished)
+
+        assert finished.outcome == EntryState.STOPPED
+        # Whatever was acquired is flushed on the way out, still in order.
+        saved = [idx for idx, _ in sink.shots]
+        assert saved == sorted(saved)
+        assert len(saved) >= 2
+        assert sink.closed
+
+    async def test_write_error_fails_run(
+        self, experiment_factory, make_engine, make_request, wait_for
+    ):
+        """A background write error fails the run and still closes the sink."""
+        sink = _FailingSink()
+
+        def factory(_request, _run_id, _schema):
+            return sink
+
+        probe = experiment_factory()
+        engine = make_engine(probe.loader, sink=factory)
+
+        engine.submit(make_request(repeats=3))
+        finished = await wait_for(engine, RunFinished)
+
+        assert finished.outcome == EntryState.FAILED
+        assert finished.error is not None and "saving shot failed" in finished.error
+        assert sink.closed

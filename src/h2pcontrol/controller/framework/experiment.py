@@ -1,6 +1,7 @@
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, ClassVar, final
@@ -11,6 +12,7 @@ import pandas as pd
 from .parameters import ParamSpec
 from .results import Results, ResultSpec
 from .stubs import StubSpec
+from .timing import ShotTimings
 from .views import ViewHandle, ViewKind, ViewSpec
 
 
@@ -19,6 +21,19 @@ class Context:
     shot_idx: int
     run_id: str = ""
     total_shots: int | None = None
+    timings: ShotTimings | None = None
+
+    def span(self, name: str) -> AbstractContextManager[None]:
+        """Time a named phase of this shot; no-op when timing is disabled.
+
+        Use inside ``shot()``::
+
+            with ctx.span("pb_program"):
+                await self.pulseblaster.Program(...)
+        """
+        if self.timings is None:
+            return nullcontext()
+        return self.timings.span(name)
 
 
 class _NoRecord(Results):
@@ -86,13 +101,14 @@ class Experiment(ABC):
         as a Pandas dataframe.
         """
         frame = type(self)._record.to_frame(await self.shot(ctx))
-        parameters = pd.DataFrame(
-            {k: [getattr(self, k)] * len(frame) for k in self._parameters},
-            index=frame.index,
-        )
-        frame.columns = pd.MultiIndex.from_product([["result"], frame.columns])
-        parameters.columns = pd.MultiIndex.from_product([["params"], parameters.columns])
-        return pd.concat([frame, parameters], axis=1)
+        with ctx.span("framework_params"):
+            parameters = pd.DataFrame(
+                {k: [getattr(self, k)] * len(frame) for k in self._parameters},
+                index=frame.index,
+            )
+            frame.columns = pd.MultiIndex.from_product([["result"], frame.columns])
+            parameters.columns = pd.MultiIndex.from_product([["params"], parameters.columns])
+            return pd.concat([frame, parameters], axis=1)
 
     @property
     def logger(self) -> logging.Logger:

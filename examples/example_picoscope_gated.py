@@ -1,26 +1,30 @@
 """
-This example experiment demonstrates programming a hardware-timed shot.
+Same acquisition as ``example_picoscope``, but the trace is reduced to scalars.
 
 Requirements:
 h2pmanager: https://github.com/torbenfreise/h2pcontrol-manager
 picoscope-server: https://github.com/torbenfreise/picoscope-server
 pulseblaster-server: https://github.com/torbenfreise/pulseblaster-server
 
-The PulseBlaster runs an infinite square wave on output channel 0, which is
-wired into the Picoscope input and acts as both signal and trigger source. Each
-shot opens one Capture call asking for ``captures_per_shot`` waveforms.
+The counterpart to ``example_picoscope``, which stores every waveform. Here each
+capture is integrated over a time window and only the resulting numbers are
+recorded, so a run costs a few hundred bytes per shot instead of a few kilobytes
+per capture. The trace is still pushed to a view, so you watch the full waveform
+live while none of it is stored — the point of the view/record split.
 
-When ``captures_per_shot``is 1 the scope runs a single block acquisition.
-Above 1 it switches to rapid block mode, where the scope re-arms itself in
-hardware between triggers and writes each waveform into its own memory segment,
-collecting the requested amount of captures before returning.
-The wave is stopped once the captures are in. ``shot()`` returns one
-row per capture, and the traces are plotted live.
+The window bounds are ordinary parameters. That makes them adjustable from the
+GUI while the run is going, scannable like anything else, and — because every
+stored row carries the current parameter values — self-describing: each
+``gate_area`` is filed next to the window that produced it.
+
+The signal is the same PulseBlaster square wave, so ``gate_area`` is amplitude
+times the high fraction of the window rather than a peak area. Scanning
+``period_ns`` against a fixed gate therefore gives a predictable curve, which is
+the point: the demo checks itself without a detector.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -57,12 +61,13 @@ if TYPE_CHECKING:
     from h2pcontrol.picoscope.v1.picoscope_pb2_grpc import PicoscopeServiceAsyncStub
     from h2pcontrol.pulseblaster.v1.pulseblaster_pb2_grpc import PulseBlasterServiceAsyncStub
 
+# PulseBlaster output bit-flags
 CHANNEL_0_HIGH = 0x01
 ALL_LOW = 0x00
 
 
-class PicoscopeRapidBlockExperiment(Experiment):
-    name = "Picoscope Rapid Block"
+class PicoscopeGatedExperiment(Experiment):
+    name = "Picoscope Gated Integral"
 
     picoscope: PicoscopeServiceAsyncStub = service_stub("picoscope-service", PicoscopeServiceStub)
     pulseblaster: PulseBlasterServiceAsyncStub = service_stub(
@@ -72,10 +77,6 @@ class PicoscopeRapidBlockExperiment(Experiment):
     # Picoscope input channel
     channel: int = 0
     voltage_range = VoltageRange.VOLTAGE_RANGE_5_V
-    # Must sit well above the ringing on the pulse edges. At 0.5 V the
-    # overshoot re-crossed the threshold and the scope triggered twice per
-    # period, halving the apparent trigger interval and giving captures at
-    # random phase (traces alternating between the high and low level).
     trigger_threshold_v: float = 1.5
 
     # Timebase / samples.
@@ -89,11 +90,17 @@ class PicoscopeRapidBlockExperiment(Experiment):
     # PulseBlaster pulse period.
     period_ns = param(20000000, min=200, max=20000000, unit="ns")
 
-    # Declared results: one row per capture.
+    # The integration window. Parameters, not constants: tunable while running,
+    # scannable, and stored with every row so the reduction stays interpretable.
+    gate_start_us = param(2.0, min=0.0, max=16.0, unit="us")
+    gate_stop_us = param(10.0, min=0.0, max=16.0, unit="us")
+
+    # Declared results: one row per capture, scalars only. The waveform the
+    # numbers came from is viewed live and never stored.
     class Record(Results):
         capture_index: int = result(description="Capture index within the shot")
-        trigger_offset_us: float = result(unit="us", description="Trigger offset within the burst")
-        trace: np.ndarray = result(unit="V", description="Scope trace")
+        gate_area: float = result(unit="V*us", description="Integral over the gate window")
+        baseline: float = result(unit="V", description="Mean before the gate, subtracted")
 
     async def setup(self) -> None:
         await self.picoscope.ConfigureChannel(
@@ -125,25 +132,16 @@ class PicoscopeRapidBlockExperiment(Experiment):
             )
         )
 
-        # The sample grid is fixed by the timebase, so build it once here rather
-        # than storing it per capture.
-        self._sample_interval_ns = timebase.sample_interval_ns
-        times_us = np.arange(self.post_samples) * self._sample_interval_ns / 1000.0
-        self.captures = self.view("Picoscope captures", x=times_us, x_unit="us", unit="V")
+        # The sample grid is fixed by the timebase, so build it once here. The
+        # gate *indices* are not cached: setup() runs before the scan loop
+        # assigns per-point values, so a window resolved here would go stale the
+        # moment anyone scans its bounds.
+        self.times_us = np.arange(self.post_samples) * timebase.sample_interval_ns / 1000.0
+        self.captures = self.view("Picoscope captures", x=self.times_us, x_unit="us", unit="V")
 
         # Last program uploaded to the pulseblaster; used to skip re-uploading an
         # identical waveform every shot (see shot()).
         self._last_program: InstructionProgram | None = None
-
-    def metadata(self) -> Mapping[str, str]:
-        # The sample grid is constant for the run and lives on the view (UI-only),
-        # so record the device-reported interval + length as run metadata to keep
-        # each stored trace's time axis reconstructable offline:
-        #     times_us = arange(post_samples) * sample_interval_ns / 1000
-        return {
-            "sample_interval_ns": str(self._sample_interval_ns),
-            "post_samples": str(self.post_samples),
-        }
 
     async def teardown(self) -> None:
         # Stop the pulseblaster (NO-OP if it was already stopped inside shot())
@@ -169,8 +167,7 @@ class PicoscopeRapidBlockExperiment(Experiment):
         with ctx.span("capture_open"):
             stream = self.picoscope.Capture(CaptureRequest(num_captures=self.captures_per_shot))
 
-        # Wait for confirmation that the picoscope is armed. The message
-        # carries no payload: its meaning is its timing (scope arm time).
+        # Wait for confirmation that the picoscope is armed (scope arm time).
         with ctx.span("armed_wait"):
             await _expect(stream, "armed", ctx)
 
@@ -178,8 +175,7 @@ class PicoscopeRapidBlockExperiment(Experiment):
         with ctx.span("pb_start"):
             await self.pulseblaster.Start(StartRequest())
 
-        # Collect raw captures
-        captures = []
+        rows = []
         for expected_index in range(self.captures_per_shot):
             # In rapid block the scope collects all captures before streaming
             # them back: the first read carries the full trigger/acquisition
@@ -195,21 +191,36 @@ class PicoscopeRapidBlockExperiment(Experiment):
 
             with ctx.span("frame_build"):
                 samples = np.asarray(capture.traces[0].samples, dtype=np.float32)
-                captures.append((capture, samples))
             with ctx.span("plot_push"):
-                self.captures.push(samples)  # update plot
+                self.captures.push(samples)  # live, per capture, not stored
+
+            with ctx.span("integrate"):
+                area, baseline = self.integrate(samples)
+            with ctx.span("frame_build"):
+                rows.append(
+                    self.Record(
+                        capture_index=capture.capture_index,
+                        gate_area=area,
+                        baseline=baseline,
+                    )
+                )
 
         with ctx.span("pb_stop"):
             await self.pulseblaster.Stop(StopRequest())
-        with ctx.span("frame_build"):
-            return [
-                self.Record(
-                    capture_index=capture.capture_index,
-                    trigger_offset_us=capture.trigger_time_offset_ns / 1000.0,
-                    trace=samples,
-                )
-                for capture, samples in captures
-            ]
+
+        return rows
+
+    def integrate(self, samples: np.ndarray) -> tuple[float, float]:
+        """Integrate one trace over the gate, against the mean before it.
+
+        Resolved per call rather than cached: searchsorted on the sample grid is
+        far cheaper than a window that silently disagrees with the parameters
+        stored alongside its own output.
+        """
+        start, stop = np.searchsorted(self.times_us, [self.gate_start_us, self.gate_stop_us])
+        baseline = float(samples[:start].mean()) if start > 0 else 0.0
+        area = float(np.trapezoid(samples[start:stop] - baseline, self.times_us[start:stop]))
+        return area, baseline
 
     def square_wave_program(self) -> InstructionProgram:
         """
