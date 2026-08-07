@@ -14,7 +14,6 @@ dependencies = [
     "grpcio>=1.80.0",
     "beyer-labs-h2pcontrol-grpc-python>=1.80.dev0,<2",
     "beyer-labs-h2pcontrol-protocolbuffers-python>=34.dev0,<36",
-    "beyer-labs-h2pcontrol-protocolbuffers-pyi>=34.dev0,<36",
     "beyer-labs-h2pcontrol-community-nipunn1313-mypy>=5.1.0.dev0,<6",
     "beyer-labs-h2pcontrol-community-nipunn1313-mypy-grpc>=5.1.0.dev0,<6",
     "protobuf>=7.34.1",
@@ -68,7 +67,14 @@ show_missing = true
 pythonVersion = "3.12"
 
 [tool.uv]
-override-dependencies = ["protobuf>=7.34.1"]
+# The official protocolbuffers-pyi and mypy-protobuf stubs both ship the same
+# *_pb2.pyi paths; whichever installs last wins, which is non-deterministic across
+# machines.
+# We exclude pyi here to ensure  the richer mypy stubs  win deterministically.
+override-dependencies = [
+    "protobuf>=7.34.1",
+    "beyer-labs-h2pcontrol-protocolbuffers-pyi ; sys_platform == 'no-such-platform'",
+]
 
 [[tool.uv.index]]
 url = "https://buf.build/gen/python"

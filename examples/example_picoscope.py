@@ -72,7 +72,7 @@ class PicoscopeRapidBlockExperiment(Experiment):
 
     # Picoscope input channel
     channel: int = 0
-    voltage_range: VoltageRange = VoltageRange.VOLTAGE_RANGE_5_V
+    voltage_range = VoltageRange.VOLTAGE_RANGE_5_V
     trigger_threshold_v: float = 0.5
 
     # Timebase / samples.
