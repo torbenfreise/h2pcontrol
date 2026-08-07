@@ -7,13 +7,14 @@
 | src/h2pcontrol/controller/\_\_init\_\_.py            |        0 |        0 |        0 |        0 |    100% |           |
 | src/h2pcontrol/controller/app.py                     |       20 |       20 |        4 |        0 |      0% |      1-34 |
 | src/h2pcontrol/controller/framework/\_\_init\_\_.py  |        0 |        0 |        0 |        0 |    100% |           |
-| src/h2pcontrol/controller/framework/experiment.py    |       65 |        3 |       14 |        4 |     91% |41-\>43, 57-58, 69-\>exit, 102 |
+| src/h2pcontrol/controller/framework/experiment.py    |       95 |        3 |       30 |        5 |     94% |45-\>47, 73-74, 85-\>exit, 142-\>144, 154 |
 | src/h2pcontrol/controller/framework/parameters.py    |       46 |        2 |       16 |        2 |     94% |    70, 73 |
+| src/h2pcontrol/controller/framework/results.py       |       30 |        0 |        4 |        0 |    100% |           |
 | src/h2pcontrol/controller/framework/scan.py          |       99 |        0 |       38 |        0 |    100% |           |
 | src/h2pcontrol/controller/framework/stubs.py         |        6 |        1 |        0 |        0 |     83% |        17 |
 | src/h2pcontrol/controller/runtime/\_\_init\_\_.py    |        0 |        0 |        0 |        0 |    100% |           |
-| src/h2pcontrol/controller/runtime/engine.py          |      195 |        7 |       44 |        2 |     96% |117, 122, 303, 310-313 |
-| src/h2pcontrol/controller/runtime/events.py          |       51 |        0 |        0 |        0 |    100% |           |
+| src/h2pcontrol/controller/runtime/engine.py          |      196 |        7 |       44 |        2 |     96% |117, 122, 311, 318-321 |
+| src/h2pcontrol/controller/runtime/events.py          |       52 |        0 |        0 |        0 |    100% |           |
 | src/h2pcontrol/controller/runtime/log\_aggregator.py |       94 |        6 |       16 |        3 |     92% |94-96, 120, 126-127, 138-\>141, 141-\>exit, 155-\>152 |
 | src/h2pcontrol/controller/runtime/run\_metadata.py   |       14 |        2 |        2 |        0 |     88% |     25-26 |
 | src/h2pcontrol/controller/runtime/session.py         |       49 |        5 |        6 |        0 |     91% |     74-78 |
@@ -24,11 +25,12 @@
 | src/h2pcontrol/controller/ui/experiment\_panel.py    |      301 |       51 |       70 |        6 |     82% |49, 53, 57, 78, 122-124, 249, 256-277, 280-282, 285, 288, 291, 298-304, 307-312, 315, 318, 321, 352, 355, 445 |
 | src/h2pcontrol/controller/ui/experiment\_view.py     |       19 |       19 |        0 |        0 |      0% |      1-30 |
 | src/h2pcontrol/controller/ui/log\_dock.py            |      189 |        3 |       32 |        4 |     97% |199, 210, 216, 330-\>exit |
-| src/h2pcontrol/controller/ui/main\_window.py         |      160 |      160 |       16 |        0 |      0% |     1-224 |
+| src/h2pcontrol/controller/ui/main\_window.py         |      166 |      166 |       16 |        0 |      0% |     1-233 |
+| src/h2pcontrol/controller/ui/plot\_dock.py           |      150 |       29 |       48 |        6 |     76% |39-44, 52, 73, 126-137, 151-153, 161-167, 194-\>191, 222-\>exit |
 | src/h2pcontrol/controller/ui/run\_controls.py        |       44 |        0 |        2 |        0 |    100% |           |
 | src/h2pcontrol/controller/ui/schedule\_dock.py       |      164 |       19 |       42 |        6 |     85% |48, 112-113, 121, 140-143, 167, 171, 180-\>178, 182-\>178, 202-206, 246-249 |
 | src/h2pcontrol/controller/ui/settings\_dialog.py     |       35 |       35 |        2 |        0 |      0% |      1-58 |
-| **TOTAL**                                            | **1762** |  **336** |  **362** |   **29** | **81%** |           |
+| **TOTAL**                                            | **1980** |  **371** |  **430** |   **36** | **81%** |           |
 
 
 ## Setup coverage badge
