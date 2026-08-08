@@ -137,13 +137,12 @@ class PicoscopeRapidBlockExperiment(Experiment):
 
         # Wait for confirmation that the picoscope is armed
         armed = await _expect(stream, "armed", ctx)
-        num_captures = armed.armed.num_captures
 
         # Start the hardware timing sequence
         await self.pulseblaster.Start(StartRequest())
 
         rows = []
-        for expected_index in range(num_captures):
+        for expected_index in range(self.captures_per_shot):
             capture = (await _expect(stream, "capture", ctx)).capture
             if capture.capture_index != expected_index:
                 raise RuntimeError(
