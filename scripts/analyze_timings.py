@@ -1,9 +1,11 @@
 """Aggregate per-shot timing CSVs written by the RunEngine.
 
-Each run produces two files next to its HDF5 result file:
+Each run produces up to three files next to its HDF5 result file:
 
-    <run>_timings.csv   one row per shot: t_wall + one column per phase (ms)
-    <run>_rpc.csv       one row per gRPC call: method, duration_ms, shot_idx
+    <run>_timings.csv        one row per shot: t_wall + one column per phase (ms)
+    <run>_rpc.csv            one row per gRPC call: method, duration_ms, shot_idx
+    <run>_store.csv          one row per shot: store_save_ms / store_flush_ms —
+                             the background writer's own wall-clock cost
 
 This script combines one or more runs (repeats) and reports:
 
@@ -12,6 +14,11 @@ This script combines one or more runs (repeats) and reports:
 - software overhead vs hardware-bound wait split, with a software-limited
   rate ceiling (what the duty cycle would be if hardware waits were zero)
 - per-RPC-method statistics from the rpc logs
+
+The store_* columns are merged into the per-phase table for visibility, but the
+background writer runs off the shot's critical path, so they are diagnostic only
+and excluded from the additive hardware/software sums (double-counting the write
+cost, which already surfaces as inflated phases like armed_wait, would be wrong).
 
 Usage:
 
@@ -39,13 +46,22 @@ META_COLS = ("shot_idx", "t_wall", "t_mono")
 # the experiment's own spans, so it is excluded from additive sums.
 ENVELOPE_PHASES = ("shot",)
 
+# Background-writer columns from <run>_store_timings.csv. Reported per-phase but
+# never summed into the duty cycle: the writer runs off the critical path.
+STORE_PHASES = ("store_save_ms", "store_flush_ms")
+
 # capture_wait_rest (rapid block reads after the first) is dominated by trace
 # transfer over gRPC, so it counts as software overhead, not hardware wait.
 DEFAULT_HARDWARE = ("armed_wait", "capture_wait", "capture_wait_first")
 
 
 def _find_latest(results_dir: Path, n: int) -> list[Path]:
-    files = sorted(results_dir.glob("*_timings.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
+    # Exclude the store sidecar: earlier builds named it '*_store_timings.csv',
+    # which the glob below would otherwise pick up as a per-shot timing file.
+    files = [
+        p for p in results_dir.glob("*_timings.csv") if not p.name.endswith("_store_timings.csv")
+    ]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     if not files:
         sys.exit(f"no *_timings.csv found in {results_dir}")
     return files[:n]
@@ -67,6 +83,13 @@ def _load_runs(paths: list[Path], warmup: int) -> tuple[pd.DataFrame, pd.DataFra
         # t_wall is the fallback for logs written before t_mono existed.
         clock = "t_mono" if "t_mono" in df.columns else "t_wall"
         df["period"] = df[clock].diff() * 1000.0  # ms
+
+        # Merge the background writer's own timing, if present (older runs lack it).
+        store_path = path.with_name(path.name.replace("_timings.csv", "_store.csv"))
+        if store_path.exists():
+            sdf = pd.read_csv(store_path).astype({"shot_idx": int})
+            df = df.merge(sdf, on="shot_idx", how="left")
+
         timing_frames.append(df)
 
         rpc_path = path.with_name(path.name.replace("_timings.csv", "_rpc.csv"))
@@ -104,7 +127,11 @@ def analyze(
     phases.index.name = "phase"
 
     hw_cols = [c for c in phase_cols if c in hardware]
-    sw_cols = [c for c in phase_cols if c not in hardware and c not in ENVELOPE_PHASES]
+    sw_cols = [
+        c
+        for c in phase_cols
+        if c not in hardware and c not in ENVELOPE_PHASES and c not in STORE_PHASES
+    ]
     per_shot_hw = timings[hw_cols].sum(axis=1) if hw_cols else pd.Series(0.0, timings.index)
     per_shot_sw = timings[sw_cols].sum(axis=1) if sw_cols else pd.Series(0.0, timings.index)
     period = timings["period"]

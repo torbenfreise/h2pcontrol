@@ -30,6 +30,7 @@ every shot.
 from __future__ import annotations
 
 import re
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -116,6 +117,10 @@ class RunStore:
         self._columns = columns
         self._table: tables.Table | None = None
         self._traces: tables.Group | None = None
+        # Per-shot write timing, written next to the result file on close.
+        # Splits the total save cost from the HDF5 flush(es) so profiling can
+        # tell disk-sync cost from the pytables append/build cost.
+        self._shot_timings: list[dict[str, float]] = []
 
     @classmethod
     def create(
@@ -157,6 +162,8 @@ class RunStore:
 
     def save_shot(self, shot_idx: int, frame: pd.DataFrame) -> None:
         """Append one shot's scalars to the data table; write arrays as datasets."""
+        t_start = time.perf_counter_ns()
+        flush_ns = 0
         flat = self._flatten(frame)
         n_rows = len(flat)
 
@@ -210,7 +217,9 @@ class RunStore:
             for col in scalar_cols:
                 row[col] = flat[col].iloc[i]
             row.append()
+        t_flush = time.perf_counter_ns()
         table.flush()
+        flush_ns += time.perf_counter_ns() - t_flush
 
         # Write trace / image arrays
         if arrays:
@@ -221,7 +230,17 @@ class RunStore:
                 node = self._h5.create_array(shot_grp, name, arr)
                 self._set_meta(node._v_attrs, self._columns[name])
 
+        t_flush = time.perf_counter_ns()
         self._h5.flush()
+        flush_ns += time.perf_counter_ns() - t_flush
+
+        self._shot_timings.append(
+            {
+                "shot_idx": float(shot_idx),
+                "store_save_ms": (time.perf_counter_ns() - t_start) / 1e6,
+                "store_flush_ms": flush_ns / 1e6,
+            }
+        )
 
     def _write_column_attrs(self, table: tables.Table, columns: list[str]) -> None:
         """Record each column's declared unit and description as table attributes."""
@@ -236,9 +255,14 @@ class RunStore:
             setattr(attrs, f"{prefix}description", column.description)
 
     def close(self) -> None:
-        """Close the HDF5 file."""
+        """Close the HDF5 file and write the per-shot write-timing sidecar."""
         if self._h5.isopen:
             self._h5.close()
+        if self._shot_timings:
+            # Name avoids the '*_timings.csv' glob the analysis uses for per-shot
+            # timing files — this is a separate, decoupled sidecar.
+            stem = self.path.with_suffix("")
+            pd.DataFrame(self._shot_timings).to_csv(f"{stem}_store.csv", index=False)
 
     @staticmethod
     def _flatten(frame: pd.DataFrame) -> pd.DataFrame:
