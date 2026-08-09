@@ -166,7 +166,7 @@ class PicoscopeRapidBlockExperiment(Experiment):
                 )
 
             samples = np.asarray(capture.traces[0].samples, dtype=np.float32)
-            self.captures.push(samples) # update plot
+            self.captures.push(samples)  # update plot
             captures.append((capture, samples))
 
         await self.pulseblaster.Stop(StopRequest())
