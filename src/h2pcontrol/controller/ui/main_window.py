@@ -25,7 +25,7 @@ from ..runtime.log_aggregator import LogAggregator
 from ..runtime.run_metadata import run_metadata
 from ..runtime.session import Session
 from ..runtime.spec import RunRequest
-from ..runtime.store import RunStore
+from ..runtime.store import RunSchema, RunStore
 from .engine_bridge import EngineBridge
 from .experiment_view import ExperimentView
 from .log_dock import LogDock
@@ -134,9 +134,11 @@ class MainWindow(QMainWindow):
         self._bridge.run_started.connect(self._on_run_started)
         self._bridge.run_finished.connect(self._on_run_finished)
 
-    def _make_sink(self, request: RunRequest, run_id: str) -> RunStore:
+    def _make_sink(self, request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
         metadata = run_metadata(request) | {"run_id": run_id}
-        return RunStore.create(self._results_root, request.experiment_name, attrs=metadata)
+        return RunStore.create(
+            self._results_root, request.experiment_name, schema=schema, attrs=metadata
+        )
 
     def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
         task = asyncio.ensure_future(coro)

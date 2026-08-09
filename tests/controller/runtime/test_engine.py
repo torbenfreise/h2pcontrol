@@ -16,7 +16,8 @@ import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.results import result
+from h2pcontrol.controller.framework.results import Results, result
+from h2pcontrol.controller.framework.views import ViewKind
 from h2pcontrol.controller.runtime.events import (
     EngineEvent,
     EngineState,
@@ -40,16 +41,19 @@ def _marker(frame: pd.DataFrame) -> int:
 
 def _snap_source(marker: int) -> str:
     return textwrap.dedent(f"""
-        import pandas as pd
         from h2pcontrol.controller.framework.experiment import Context, Experiment
         from h2pcontrol.controller.framework.parameters import param
+        from h2pcontrol.controller.framework.results import Results, result
 
         class SnapExp(Experiment):
             name = "Snap"
             dummy = param(0)
 
-            async def shot(self, ctx: Context) -> pd.DataFrame:
-                return pd.DataFrame({{"marker": [{marker}]}})
+            class Record(Results):
+                marker: int = result()
+
+            async def shot(self, ctx: Context) -> list[Record]:
+                return [self.Record(marker={marker})]
     """)
 
 
@@ -430,7 +434,7 @@ class TestErrorTaxonomy:
                 pass
 
         probe = experiment_factory()
-        engine = make_engine(probe.loader, sink=lambda _req, _rid: FailingSink())
+        engine = make_engine(probe.loader, sink=lambda _req, _rid, _schema: FailingSink())
         engine.submit(make_request(repeats=1))
         finished = await wait_for(engine, RunFinished)
         assert finished.outcome == EntryState.FAILED
@@ -640,28 +644,30 @@ class TestAclose:
         await engine.aclose()
 
 
-class TestPlots:
-    async def test_run_started_carries_declared_plots(self, make_engine, make_request, wait_for):
-        class PlotExp(Experiment):
-            name = "PlotExp"
-            xr = result(float, unit="s")
-            yr = result(float, unit="V")
+class TestViews:
+    async def test_run_started_carries_declared_views(self, make_engine, make_request, wait_for):
+        class ViewExp(Experiment):
+            name = "ViewExp"
+
+            class Record(Results):
+                yr: float = result(unit="V")
 
             async def setup(self) -> None:
-                self.plot(self.yr, x=self.xr, title="P")
+                self.series = self.view("P", unit="V", kind=ViewKind.SERIES)
 
-            async def shot(self, ctx: Context) -> pd.DataFrame:
-                return pd.DataFrame({"xr": [0.0], "yr": [1.0]})
+            async def shot(self, ctx: Context) -> list[Record]:
+                self.series.push(ctx.shot_idx, 1.0)
+                return [self.Record(yr=1.0)]
 
         def loader(_source: str, _path: Path) -> type[Experiment]:
-            return PlotExp
+            return ViewExp
 
         engine = make_engine(loader)
         engine.submit(make_request(repeats=1))
         started = await wait_for(engine, RunStarted)
 
-        assert len(started.plots) == 1
-        spec = started.plots[0]
-        assert spec.ys == (PlotExp.yr,)
-        assert spec.x is PlotExp.xr
-        assert spec.title == "P"
+        assert len(started.views) == 1
+        handle = started.views[0]
+        assert handle.spec.title == "P"
+        assert handle.spec.unit == "V"
+        assert handle.spec.kind is ViewKind.SERIES

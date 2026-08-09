@@ -1,72 +1,74 @@
-from dataclasses import dataclass, field
-from enum import StrEnum
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass, field, fields
+from typing import Any, dataclass_transform, get_type_hints
 
 import numpy as np
-
-from .parameters import ParamSpec
-
-
-class PlotError(ValueError):
-    """A plot declaration references something that is not a declared result/parameter."""
+import pandas as pd
 
 
-class PlotKind(StrEnum):
-    """How a plot draws its curves."""
-
-    LINE = "line"
-    """A trace redrawn per shot (array-valued y)."""
-
-    SERIES = "series"
-    """Points accumulated across shots (scalar y)."""
+class ResultError(ValueError):
+    """A result is malformed."""
 
 
-@dataclass
+@dataclass(frozen=True)
 class ResultSpec:
-    """Typed experiment result column.
+    """Internal description of one result column.
 
-    Declared as a class attribute (``signal = result(float, unit="V")``) and referenced
-    from ``setup()`` to build plots (``self.plot(self.signal, ...)``).
+    Used by the store to build ``/data`` table description from declared dtypes.
     """
 
     dtype: type
     unit: str | None = None
     description: str | None = None
+    name: str | None = None
 
-    # Inferred from attribute declaration
-    name: str | None = field(default=None, init=False)
+    @property
+    def is_array(self) -> bool:
+        """Whether this result stores arrays (``/traces`` datasets) vs table scalars."""
+        return self.dtype is np.ndarray
 
-    def __set_name__(self, owner: type, name: str) -> None:
-        self.name = name
 
+def result(*, unit: str | None = None, description: str | None = None) -> Any:
+    """Declare a result field on a :class:`Results` record.
 
-def result(dtype: type, *, unit: str | None = None, description: str | None = None) -> ResultSpec:
-    """Declare an experiment result column.
-
-    Examples::
-
-        signal = result(float, unit="V")
-        trace = result(np.ndarray, unit="V", description="MCP anode trace")
-
-    The declared ``name`` is the column ``shot()`` must return.
+    Optionally specify the  ``unit`` and ``description`` (stored as HDF5 column attributes)
     """
-    return ResultSpec(dtype=dtype, unit=unit, description=description)
+    return field(metadata={"unit": unit, "description": description})
 
 
-@dataclass
-class PlotSpec:
-    """A relation between declared results: which curves share a plot, and the x axis.
+@dataclass_transform(field_specifiers=(result,))
+class Results:
+    """Base for an experiment's per-shot record.
 
-    Built by ``Experiment.plot(*ys, x=..., ...)``.
+    Subclasses are turned into dataclasses automatically, so their annotated
+    fields are the recorded columns and construction is type-checked.
     """
 
-    ys: tuple[ResultSpec, ...]
-    x: ResultSpec | ParamSpec | None = None
-    kind: PlotKind | None = None
-    title: str | None = None
+    def __init_subclass__(cls, **kw: Any) -> None:
+        super().__init_subclass__(**kw)
+        dataclass(cls)
 
-    def resolve_kind(self) -> PlotKind:
-        if self.kind is not None:
-            return self.kind
-        if any(y.dtype is np.ndarray for y in self.ys):
-            return PlotKind.LINE
-        return PlotKind.SERIES
+    @classmethod
+    def specs(cls) -> dict[str, ResultSpec]:
+        """The storage schema: one :class:`ResultSpec` per declared field.
+
+        Dtypes are resolved from the annotations.
+        """
+        hints = get_type_hints(cls)
+        return {
+            f.name: ResultSpec(
+                dtype=hints[f.name],
+                unit=f.metadata.get("unit"),
+                description=f.metadata.get("description"),
+                name=f.name,
+            )
+            for f in fields(cls)  # type: ignore[arg-type]  # cls is a dataclass
+        }
+
+    @classmethod
+    def to_frame(cls, rows: Sequence[Results]) -> pd.DataFrame:
+        """Assemble the shot's rows into a DataFrame, one column per declared field."""
+        names = [f.name for f in fields(cls)]  # type: ignore[arg-type]  # cls is a dataclass
+        return pd.DataFrame({n: [getattr(r, n) for r in rows] for n in names})

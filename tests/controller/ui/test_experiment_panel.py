@@ -1,8 +1,8 @@
-import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import ParameterError, param
+from h2pcontrol.controller.framework.results import Results
 from h2pcontrol.controller.runtime.spec import CenteredAxis, LinearAxis, ListAxis
 from h2pcontrol.controller.ui.experiment_panel import ExperimentPanel
 
@@ -11,8 +11,8 @@ class Exp(Experiment):
     voltage = param(3.3, min=0.0, max=5.0, unit="V")
     count = param(10, min=1, max=100)
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
-        return pd.DataFrame()
+    async def shot(self, ctx: Context) -> list[Results]:
+        return []
 
 
 class GroupedExp(Experiment):
@@ -20,8 +20,8 @@ class GroupedExp(Experiment):
     current = param(0.0, min=0.0, max=1.0, group="ramp")
     frequency = param(1.0, min=0.0, max=100.0)
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
-        return pd.DataFrame()
+    async def shot(self, ctx: Context) -> list[Results]:
+        return []
 
 
 class MultiGroupExp(Experiment):
@@ -31,8 +31,8 @@ class MultiGroupExp(Experiment):
     power = param(0.0, min=-10.0, max=10.0, group="rf")
     gain = param(1.0, min=0.0, max=10.0)
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
-        return pd.DataFrame()
+    async def shot(self, ctx: Context) -> list[Results]:
+        return []
 
 
 @pytest.fixture

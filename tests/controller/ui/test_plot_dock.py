@@ -3,20 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import cast
 
-import pandas as pd
+import numpy as np
 import pytest
 
-from h2pcontrol.controller.framework.results import PlotSpec, ResultSpec, result
+from h2pcontrol.controller.framework.views import ViewHandle, ViewKind, ViewSpec
 from h2pcontrol.controller.runtime.engine import RunEngine
 from h2pcontrol.controller.runtime.events import (
     EntryState,
     RunFinished,
     RunId,
     RunStarted,
-    ShotCompleted,
 )
 from h2pcontrol.controller.ui.engine_bridge import EngineBridge
-from h2pcontrol.controller.ui.plot_dock import PlotDock, _PlotPanel
+from h2pcontrol.controller.ui.plot_dock import PlotDock, _ViewPanel
 
 
 class FakeEngine:
@@ -47,125 +46,153 @@ def dock(qtbot, fake_engine: FakeEngine) -> PlotDock:
     return d
 
 
-def _res(name: str, dtype: type = float, unit: str | None = None) -> ResultSpec:
-    spec = result(dtype, unit=unit)
-    spec.name = name
-    return spec
+def _series(title: str = "V", unit: str | None = None, x_unit: str | None = None) -> ViewHandle:
+    return ViewHandle(ViewSpec(title=title, kind=ViewKind.SERIES, unit=unit, x_unit=x_unit))
 
 
-def _started(run_id: str, plots: tuple[PlotSpec, ...]) -> RunStarted:
+def _line(
+    title: str = "V",
+    x: np.ndarray | None = None,
+    unit: str | None = None,
+    x_unit: str | None = None,
+) -> ViewHandle:
+    return ViewHandle(ViewSpec(title=title, kind=ViewKind.LINE, x=x, unit=unit, x_unit=x_unit))
+
+
+def _started(run_id: str, views: tuple[ViewHandle, ...]) -> RunStarted:
     return RunStarted(
         run_id=RunId(run_id),
         total_shots=None,
         result_path=Path("/tmp/run.h5"),
-        plots=plots,
+        views=views,
     )
 
 
-def _frame(rows: list[tuple[float, float]]) -> pd.DataFrame:
-    cols = pd.MultiIndex.from_tuples([("result", "x"), ("result", "y")])
-    return pd.DataFrame(rows, columns=cols)
+# ---------------------------------------------------------------------------
+# run lifecycle
+# ---------------------------------------------------------------------------
 
 
 def test_run_started_builds_tabs_and_shows(dock, fake_engine):
-    plots = (
-        PlotSpec(ys=(_res("y"),), x=_res("x"), title="First"),
-        PlotSpec(ys=(_res("y2"),), title="Second"),
-    )
-    fake_engine.emit(_started("r1", plots))
-
+    fake_engine.emit(_started("r1", (_series("First"), _series("Second"))))
     assert dock._tabs.count() == 2
     assert dock._tabs.tabText(0) == "First"
     assert dock._tabs.tabText(1) == "Second"
     assert not dock.isHidden()
+    assert dock._timer.isActive()
 
 
-def test_run_started_without_plots_hides(dock, fake_engine):
-    fake_engine.emit(_started("r1", (PlotSpec(ys=(_res("y"),)),)))
+def test_run_started_without_views_hides(dock, fake_engine):
+    fake_engine.emit(_started("r1", (_series("Only"),)))
     assert not dock.isHidden()
 
     fake_engine.emit(_started("r2", ()))
     assert dock.isHidden()
     assert dock._tabs.count() == 0
+    assert not dock._timer.isActive()
 
 
-def test_tab_label_derived_from_channel_when_no_title(dock, fake_engine):
-    y = _res("signal")
-    y.description = "Signal"
-    fake_engine.emit(_started("r1", (PlotSpec(ys=(y,)),)))
-    assert dock._tabs.tabText(0) == "Signal"
+# ---------------------------------------------------------------------------
+# the dirty-buffer contract: pushes are drawn only by the repaint tick
+# ---------------------------------------------------------------------------
 
 
-def test_shot_completed_appends_series_point(dock, fake_engine):
-    spec = PlotSpec(ys=(_res("y"),), x=_res("x"))
-    fake_engine.emit(_started("r1", (spec,)))
+def test_push_is_not_drawn_until_tick(dock, fake_engine):
+    view = _series()
+    fake_engine.emit(_started("r1", (view,)))
 
-    fake_engine.emit(
-        ShotCompleted(run_id=RunId("r1"), shot_idx=0, total_shots=None, frame=_frame([(0.0, 1.0)]))
-    )
-    xs, ys = dock._panels[0].curves[0].getData()
+    view.push(0.0, 1.0)  # buffered + dirty, but not drawn
+    xs, _ = dock._panels[0].curve.getData()
+    assert xs is None or len(xs) == 0
+
+    dock._tick()  # the timer's work — now it draws
+    xs, ys = dock._panels[0].curve.getData()
     assert list(xs) == [0.0]
     assert list(ys) == [1.0]
 
-    fake_engine.emit(
-        ShotCompleted(run_id=RunId("r1"), shot_idx=1, total_shots=None, frame=_frame([(1.0, 2.0)]))
-    )
-    xs, ys = dock._panels[0].curves[0].getData()
+
+def test_series_accumulates_across_ticks(dock, fake_engine):
+    view = _series()
+    fake_engine.emit(_started("r1", (view,)))
+
+    view.push(0.0, 1.0)
+    dock._tick()
+    view.push(1.0, 2.0)
+    dock._tick()
+
+    xs, ys = dock._panels[0].curve.getData()
     assert list(xs) == [0.0, 1.0]
     assert list(ys) == [1.0, 2.0]
 
 
-def test_multi_row_shot_appends_all_rows(dock, fake_engine):
-    spec = PlotSpec(ys=(_res("y"),), x=_res("x"))
-    fake_engine.emit(_started("r1", (spec,)))
+def test_multiple_pushes_coalesce_into_one_tick(dock, fake_engine):
+    view = _series()
+    fake_engine.emit(_started("r1", (view,)))
 
-    fake_engine.emit(
-        ShotCompleted(
-            run_id=RunId("r1"),
-            shot_idx=0,
-            total_shots=None,
-            frame=_frame([(0.0, 1.0), (1.0, 2.0), (2.0, 3.0)]),
-        )
-    )
-    xs, ys = dock._panels[0].curves[0].getData()
+    for i in range(3):
+        view.push(float(i), float(i))
+    dock._tick()  # one repaint draws all buffered points
+
+    xs, ys = dock._panels[0].curve.getData()
+    assert list(xs) == [0.0, 1.0, 2.0]
+    assert list(ys) == [0.0, 1.0, 2.0]
+
+
+def test_line_push_replaces_curve(dock, fake_engine):
+    view = _line(x=np.arange(3.0))
+    fake_engine.emit(_started("r1", (view,)))
+
+    view.push(np.array([1.0, 2.0, 3.0]))
+    dock._tick()
+    xs, ys = dock._panels[0].curve.getData()
     assert list(xs) == [0.0, 1.0, 2.0]
     assert list(ys) == [1.0, 2.0, 3.0]
 
-
-def test_shot_from_other_run_is_ignored(dock, fake_engine):
-    spec = PlotSpec(ys=(_res("y"),), x=_res("x"))
-    fake_engine.emit(_started("r1", (spec,)))
-    fake_engine.emit(
-        ShotCompleted(
-            run_id=RunId("other"), shot_idx=0, total_shots=None, frame=_frame([(0.0, 1.0)])
-        )
-    )
-    xs, _ = dock._panels[0].curves[0].getData()
-    assert xs is None or len(xs) == 0
+    view.push(np.array([4.0, 5.0, 6.0]))  # replaces, not appends
+    dock._tick()
+    _, ys = dock._panels[0].curve.getData()
+    assert list(ys) == [4.0, 5.0, 6.0]
 
 
-def test_run_finished_stops_updating(dock, fake_engine):
-    spec = PlotSpec(ys=(_res("y"),), x=_res("x"))
-    fake_engine.emit(_started("r1", (spec,)))
+def test_clean_panel_is_not_redrawn(dock, fake_engine):
+    view = _series()
+    fake_engine.emit(_started("r1", (view,)))
+    view.push(0.0, 1.0)
+    dock._tick()
+    assert not view.dirty  # tick cleared it
+    # A tick with nothing pushed leaves the flag clear and the curve unchanged.
+    dock._tick()
+    assert not view.dirty
+
+
+def test_run_finished_flushes_and_stops(dock, fake_engine):
+    view = _series()
+    fake_engine.emit(_started("r1", (view,)))
+    view.push(0.0, 1.0)  # pushed but not yet ticked
+
     fake_engine.emit(
         RunFinished(run_id=RunId("r1"), outcome=EntryState.COMPLETED, shots_completed=1)
     )
+    # The final flush draws the last push, then the timer stops.
+    xs, ys = dock._panels[0].curve.getData()
+    assert list(xs) == [0.0]
+    assert list(ys) == [1.0]
+    assert not dock._timer.isActive()
 
-    fake_engine.emit(
-        ShotCompleted(run_id=RunId("r1"), shot_idx=9, total_shots=None, frame=_frame([(9.0, 9.0)]))
-    )
-    xs, _ = dock._panels[0].curves[0].getData()
-    assert xs is None or len(xs) == 0
+
+# ---------------------------------------------------------------------------
+# crosshair
+# ---------------------------------------------------------------------------
 
 
 def test_crosshair_label_uses_axis_units(qtbot):
-    panel = _PlotPanel(PlotSpec(ys=(_res("sig", float, "V"),), x=_res("t", float, "s")))
+    panel = _ViewPanel(_line(x=np.arange(3.0), unit="V", x_unit="s"))
     qtbot.addWidget(panel.widget)
     text = panel._format_coord_text(1e-6, 0.5)
     assert "s" in text and "V" in text
 
 
-def test_crosshair_label_shows_shot_axis_without_x(qtbot):
-    panel = _PlotPanel(PlotSpec(ys=(_res("sig", float, "V"),)))
+def test_crosshair_label_shows_shot_axis_for_bare_series(qtbot):
+    panel = _ViewPanel(_series(unit="V"))
     qtbot.addWidget(panel.widget)
     assert "shot" in panel._format_coord_text(3.0, 0.5)

@@ -14,9 +14,11 @@ from h2pcontrol.sdk.client import Client
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
+from h2pcontrol.controller.framework.results import Results, result
 from h2pcontrol.controller.runtime.engine import Loader, RunEngine, SinkFactory
 from h2pcontrol.controller.runtime.events import RunId
 from h2pcontrol.controller.runtime.spec import RunRequest
+from h2pcontrol.controller.runtime.store import RunSchema
 
 
 def no_client() -> Client:
@@ -46,7 +48,7 @@ def sinks() -> list[FakeSink]:
 
 @pytest.fixture
 def sink_factory(sinks: list[FakeSink]) -> SinkFactory:
-    def factory(_request: RunRequest, _run_id: RunId) -> FakeSink:
+    def factory(_request: RunRequest, _run_id: RunId, _schema: RunSchema) -> FakeSink:
         sink = FakeSink()
         sinks.append(sink)
         return sink
@@ -71,19 +73,22 @@ class ExperimentProbe:
         class _Exp(Experiment):
             voltage = param(3.3, min=0.0, max=5.0, unit="V")
 
+            class Record(Results):
+                value: float = result(description="shot index as a reading")
+
             def __init__(self) -> None:
                 super().__init__()
                 self.contexts: list[Context] = []
                 self.teardown_called = False
                 probe.instances.append(self)
 
-            async def shot(self, ctx: Context) -> pd.DataFrame:
+            async def shot(self, ctx: Context) -> list[Record]:
                 if raise_on_shot is not None:
                     raise raise_on_shot
                 if block_event is not None and (block_at is None or ctx.shot_idx == block_at):
                     await block_event.wait()
                 self.contexts.append(ctx)
-                return pd.DataFrame({"value": [ctx.shot_idx * 1.0]})
+                return [self.Record(value=ctx.shot_idx * 1.0)]
 
             async def teardown(self) -> None:
                 self.teardown_called = True

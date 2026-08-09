@@ -20,10 +20,10 @@ row per capture, and the traces are plotted live.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 import numpy as np
-import pandas as pd
 from h2pcontrol.picoscope.v1.picoscope_pb2 import (
     CaptureRequest,
     CaptureResponse,
@@ -49,7 +49,7 @@ from h2pcontrol.pulseblaster.v1.pulseblaster_pb2_grpc import PulseBlasterService
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import result
+from h2pcontrol.controller.framework.results import Results, result
 from h2pcontrol.controller.framework.stubs import service_stub
 
 if TYPE_CHECKING:
@@ -87,10 +87,10 @@ class PicoscopeRapidBlockExperiment(Experiment):
     period_ns = param(4000, min=200, max=100000, unit="ns")
 
     # Declared results: one row per capture.
-    capture_index = result(int, description="Capture index within the shot")
-    trigger_offset_us = result(float, unit="us", description="Trigger offset within the burst")
-    times_us = result(np.ndarray, unit="us", description="Sample times")
-    trace = result(np.ndarray, unit="V", description="Scope trace")
+    class Record(Results):
+        capture_index: int = result(description="Capture index within the shot")
+        trigger_offset_us: float = result(unit="us", description="Trigger offset within the burst")
+        trace: np.ndarray = result(unit="V", description="Scope trace")
 
     async def setup(self) -> None:
         await self.picoscope.ConfigureChannel(
@@ -114,34 +114,49 @@ class PicoscopeRapidBlockExperiment(Experiment):
                 )
             )
         )
-        await self.picoscope.ConfigureTimebase(
+        timebase = await self.picoscope.ConfigureTimebase(
             ConfigureTimebaseRequest(
                 timebase_index=self.timebase_index,
                 num_samples_pre_trigger=self.pre_samples,
                 num_samples_post_trigger=self.post_samples,
             )
         )
-        await self.pulseblaster.Stop(StopRequest())
-        await self.pulseblaster.Program(ProgramRequest(instructions=self.square_wave_program()))
 
-        self.plot(self.trace, x=self.times_us, title="Picoscope captures")
+        # The sample grid is fixed by the timebase, so build it once here rather
+        # than storing it per capture.
+        self._sample_interval_ns = timebase.sample_interval_ns
+        times_us = np.arange(self.post_samples) * self._sample_interval_ns / 1000.0
+        self.captures = self.view("Picoscope captures", x=times_us, x_unit="us", unit="V")
+
+    def metadata(self) -> Mapping[str, str]:
+        # The sample grid is constant for the run and lives on the view (UI-only),
+        # so record the device-reported interval + length as run metadata to keep
+        # each stored trace's time axis reconstructable offline:
+        #     times_us = arange(post_samples) * sample_interval_ns / 1000
+        return {
+            "sample_interval_ns": str(self._sample_interval_ns),
+            "post_samples": str(self.post_samples),
+        }
 
     async def teardown(self) -> None:
         # Stop the pulseblaster (NO-OP if it was already stopped inside shot())
         await self.pulseblaster.Stop(StopRequest())
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
+    async def shot(self, ctx: Context) -> list[Record]:
+        # Program the pulseblaster with the current period.
+        await self.pulseblaster.Program(ProgramRequest(instructions=self.square_wave_program()))
 
         # Arm the picoscope trigger and open the capture stream.
         stream = self.picoscope.Capture(CaptureRequest(num_captures=self.captures_per_shot))
 
         # Wait for confirmation that the picoscope is armed
-        armed = await _expect(stream, "armed", ctx)
+        await _expect(stream, "armed", ctx)
 
         # Start the hardware timing sequence
         await self.pulseblaster.Start(StartRequest())
 
-        rows = []
+        # Collect raw captures
+        captures = []
         for expected_index in range(self.captures_per_shot):
             capture = (await _expect(stream, "capture", ctx)).capture
             if capture.capture_index != expected_index:
@@ -150,18 +165,20 @@ class PicoscopeRapidBlockExperiment(Experiment):
                     f"got {capture.capture_index}"
                 )
 
-            trace = capture.traces[0]
-            rows.append(
-                {
-                    "capture_index": capture.capture_index,
-                    "trigger_offset_us": capture.trigger_time_offset_ns / 1000.0,
-                    "times_us": np.asarray(trace.times_seconds, dtype=np.float64) * 1e6,
-                    "trace": np.asarray(trace.samples, dtype=np.float32),
-                }
-            )
+            samples = np.asarray(capture.traces[0].samples, dtype=np.float32)
+            self.captures.push(samples) # update plot
+            captures.append((capture, samples))
 
         await self.pulseblaster.Stop(StopRequest())
-        return pd.DataFrame(rows)
+
+        return [
+            self.Record(
+                capture_index=capture.capture_index,
+                trigger_offset_us=capture.trigger_time_offset_ns / 1000.0,
+                trace=samples,
+            )
+            for capture, samples in captures
+        ]
 
     def square_wave_program(self) -> InstructionProgram:
         """

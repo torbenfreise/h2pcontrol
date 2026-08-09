@@ -1,15 +1,17 @@
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, ClassVar, final
 
+import numpy as np
 import pandas as pd
 
 from .parameters import ParamSpec
-from .results import PlotError, PlotKind, PlotSpec, ResultSpec
+from .results import Results, ResultSpec
 from .stubs import StubSpec
+from .views import ViewHandle, ViewKind, ViewSpec
 
 
 @dataclass(frozen=True)
@@ -19,19 +21,23 @@ class Context:
     total_shots: int | None = None
 
 
+class _NoRecord(Results):
+    """Default record for experiments that declare no results."""
+
+
 class Experiment(ABC):
     name: ClassVar[str] = ""
     _parameters: ClassVar[dict[str, ParamSpec]] = {}
     _results: ClassVar[dict[str, ResultSpec]] = {}
+    _record: ClassVar[type[Results]] = _NoRecord
     _stubs: ClassVar[dict[str, StubSpec]] = {}
-    _plots: list[PlotSpec]
+    _views: list[ViewHandle]
 
     def __init_subclass__(cls, **kw):
         super().__init_subclass__(**kw)
         Experiment._collect_parameters(cls)
         Experiment._collect_results(cls)
         Experiment._collect_stubs(cls)
-        Experiment._wrap_shot(cls)
 
     @staticmethod
     def _collect_parameters(experiment_cls) -> None:
@@ -50,15 +56,13 @@ class Experiment(ABC):
 
     @staticmethod
     def _collect_results(experiment_cls) -> None:
-        """Collects result() declarations."""
-        inherited = dict(experiment_cls._results)
-        for name, val in list(experiment_cls.__dict__.items()):
-            if not isinstance(val, ResultSpec):
-                continue
-            val.name = name
-            inherited[name] = val
-
-        experiment_cls._results = inherited
+        """Find the experiment's inner ``Results`` subclass  and derive
+        the storage schema from it."""
+        for val in vars(experiment_cls).values():
+            if isinstance(val, type) and issubclass(val, Results) and val is not Results:
+                experiment_cls._record = val
+                break
+        experiment_cls._results = experiment_cls._record.specs()
 
     @staticmethod
     def _collect_stubs(experiment_cls) -> None:
@@ -75,27 +79,20 @@ class Experiment(ABC):
 
         experiment_cls._stubs = inherited_stubs
 
-    @staticmethod
-    def _wrap_shot(experiment_cls) -> None:
+    @final
+    async def record(self, ctx: "Context") -> pd.DataFrame:
         """
-        Replaces the shot method defined in the experiment in order
-        to append the current experiment parameters to the returned
-        dataframe.
+        Run the user's shot, and return the results + parameters
+        as a Pandas dataframe.
         """
-        if "shot" in experiment_cls.__dict__:
-            original = experiment_cls.__dict__["shot"]
-
-            async def wrapped_shot(self, ctx, _orig=original):
-                result = await _orig(self, ctx)
-                parameters = pd.DataFrame(
-                    {k: [getattr(self, k)] * len(result) for k in self._parameters},
-                    index=result.index,
-                )
-                result.columns = pd.MultiIndex.from_product([["result"], result.columns])
-                parameters.columns = pd.MultiIndex.from_product([["params"], parameters.columns])
-                return pd.concat([result, parameters], axis=1)
-
-            experiment_cls.shot = wrapped_shot
+        frame = type(self)._record.to_frame(await self.shot(ctx))
+        parameters = pd.DataFrame(
+            {k: [getattr(self, k)] * len(frame) for k in self._parameters},
+            index=frame.index,
+        )
+        frame.columns = pd.MultiIndex.from_product([["result"], frame.columns])
+        parameters.columns = pd.MultiIndex.from_product([["params"], parameters.columns])
+        return pd.concat([frame, parameters], axis=1)
 
     @property
     def logger(self) -> logging.Logger:
@@ -116,36 +113,32 @@ class Experiment(ABC):
         """Read-only view of this experiment's declared results."""
         return MappingProxyType(cls._results)
 
-    def plot(
+    def view(
         self,
-        *ys: ResultSpec,
-        x: ResultSpec | ParamSpec | None = None,
-        kind: PlotKind | None = None,
-        title: str | None = None,
-    ) -> None:
-        """Declare a live plot relating declared results. Call from ``setup()``.
+        title: str,
+        *,
+        x: np.ndarray | Sequence[float] | None = None,
+        x_unit: str | None = None,
+        unit: str | None = None,
+        kind: ViewKind | None = None,
+    ) -> ViewHandle:
+        """Declare a live view and return a handle to push values to. Call from ``setup()``.
 
-        Every ``y`` must be a result declared on this experiment; ``x`` may be a declared
-        result, a declared parameter, or ``None`` (one plot point per shot).
+        Views are UI-only: pushed values are drawn but never stored.
         """
-        if not ys:
-            raise PlotError("plot() requires at least one result to plot")
-        for y in ys:
-            if not any(y is r for r in self._results.values()):
-                raise PlotError(f"plot() y {y!r} is not a result declared on {type(self).__name__}")
-        if x is not None:
-            registry = self._results if isinstance(x, ResultSpec) else self._parameters
-            if not any(x is spec for spec in registry.values()):
-                raise PlotError(
-                    f"plot() x {x!r} is not a result or parameter declared on {type(self).__name__}"
-                )
-        if "_plots" not in self.__dict__:
-            self._plots = []
-        self._plots.append(PlotSpec(ys=tuple(ys), x=x, kind=kind, title=title))
+        if kind is None:
+            kind = ViewKind.LINE if x is not None else ViewKind.SERIES
+        x_values = None if x is None else np.asarray(x, dtype=float)
+        spec = ViewSpec(title=title, kind=kind, unit=unit, x=x_values, x_unit=x_unit)
+        handle = ViewHandle(spec)
+        if "_views" not in self.__dict__:
+            self._views = []
+        self._views.append(handle)
+        return handle
 
-    def plots(self) -> tuple[PlotSpec, ...]:
-        """Plots declared during ``setup()``, in declaration order."""
-        return tuple(self.__dict__.get("_plots", ()))
+    def views(self) -> tuple[ViewHandle, ...]:
+        """Views declared during ``setup()``, in declaration order."""
+        return tuple(self.__dict__.get("_views", ()))
 
     @final
     async def connect(self, client: Any) -> None:
@@ -166,5 +159,18 @@ class Experiment(ABC):
         to rest state.
         """
 
+    def metadata(self) -> Mapping[str, str]:
+        """Run-level metadata written to the result file's root attributes.
+
+        Called once after ``setup()``, so it can refer to values populated there.
+        Constant for the whole run.
+        """
+        return {}
+
     @abstractmethod
-    async def shot(self, ctx: "Context") -> pd.DataFrame: ...
+    async def shot(self, ctx: "Context") -> Sequence[Results]:
+        """Run one shot and return its recorded rows.
+
+        Return a list of ``self.Record(...)`` instances (one per row).
+        """
+        ...

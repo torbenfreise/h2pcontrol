@@ -15,7 +15,7 @@ from h2pcontrol.controller.runtime.events import (
 from h2pcontrol.controller.runtime.run_metadata import run_metadata
 from h2pcontrol.controller.runtime.session import Session
 from h2pcontrol.controller.runtime.spec import LinearAxis, ListAxis, RunRequest, ScanSpec
-from h2pcontrol.controller.runtime.store import RunStore
+from h2pcontrol.controller.runtime.store import RunSchema, RunStore
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,9 +28,9 @@ def experiment_file(experiments_dir: Path) -> Path:
 def _engine(results_root: str) -> RunEngine:
     session = Session(manager_address="localhost:50051")
 
-    def make_sink(request: RunRequest, run_id: str) -> RunStore:
+    def make_sink(request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
         metadata = run_metadata(request) | {"run_id": run_id}
-        return RunStore.create(results_root, request.experiment_name, attrs=metadata)
+        return RunStore.create(results_root, request.experiment_name, schema=schema, attrs=metadata)
 
     return RunEngine(
         client_provider=lambda: session.client,
@@ -81,6 +81,8 @@ class TestEndToEnd:
             assert attrs["experiment_source"] == source
             assert "run_id" in attrs._v_attrnames
             assert "h2pcontrol_version" in attrs._v_attrnames
+            # Experiment.metadata() reaches the file's root attributes.
+            assert attrs["n_samples"] == "100"
 
     async def test_scan_run_produces_correct_shots(
         self, experiment_file: Path, tmp_path: Path, wait_for
