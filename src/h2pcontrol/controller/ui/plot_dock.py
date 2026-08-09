@@ -1,99 +1,57 @@
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDockWidget, QTabWidget, QVBoxLayout, QWidget
 
-from ..framework.parameters import ParamSpec
-from ..framework.results import PlotKind, PlotSpec, ResultSpec
+from ..framework.views import ViewHandle, ViewKind
 
 if TYPE_CHECKING:
-    import pandas as pd
-
-    from ..runtime.events import RunFinished, RunStarted, ShotCompleted
+    from ..runtime.events import RunFinished, RunStarted
     from .engine_bridge import EngineBridge
 
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
 
-# Distinct pen colours for plots with multiple curves.
-_PENS = ("#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#8c564b")
+# Repaint dirty panels at ~30 Hz, instead of on push
+# to keep ui work out of the shot.
+_REPAINT_INTERVAL_MS = 33
+
+_PEN = "#1f77b4"
 
 
-def _axis_label(spec: ResultSpec | ParamSpec) -> str:
-    return spec.description or spec.name or ""
+class _ViewPanel:
+    """One view tab. Reads its handle's buffer on repaint."""
 
-
-def _column(frame: pd.DataFrame, spec: ResultSpec | ParamSpec) -> list:
-    """``spec``'s column as one entry per row of the shot frame."""
-    top = "params" if isinstance(spec, ParamSpec) else "result"
-    return list(frame[(top, spec.name)])
-
-
-def _join_rows(arrays: list) -> np.ndarray:
-    """Concatenate per-row arrays into one curve, separated by blank space."""
-    separator = np.array([np.nan])  # NaN stops pyqt from joining points.
-    parts: list[np.ndarray] = []
-    for array in arrays:
-        parts.append(np.asarray(array, dtype=float))
-        parts.append(separator)
-    return np.concatenate(parts[:-1])
-
-
-def _tab_label(spec: PlotSpec, index: int) -> str:
-    if spec.title:
-        return spec.title
-    names = [str(y.description or y.name) for y in spec.ys if (y.description or y.name)]
-    if len(names) > 2:
-        names = [*names[:2], "…"]
-    return ", ".join(names) or f"Plot {index + 1}"
-
-
-class _PlotPanel:
-    """One plot tab."""
-
-    def __init__(self, spec: PlotSpec) -> None:
-        self.spec = spec
-        self.kind = spec.resolve_kind()
+    def __init__(self, handle: ViewHandle) -> None:
+        self.handle = handle
+        self.spec = handle.spec
         self.widget = pg.PlotWidget()
         self.widget.showGrid(x=True, y=True, alpha=0.3)
 
-        if self.spec.x is not None:
-            self._set_axis("bottom", _axis_label(self.spec.x), self.spec.x.unit)
-        else:
+        if self.spec.x_unit:
+            self._set_axis("bottom", "", self.spec.x_unit)
+        elif self.spec.kind is ViewKind.SERIES and self.spec.x is None:
             self._set_axis("bottom", "shot", None)
-        y0 = self.spec.ys[0]
-        self._set_axis("left", _axis_label(y0), y0.unit)
+        else:
+            self._set_axis("bottom", "", None)
+        self._set_axis("left", self.spec.title, self.spec.unit)
 
-        if len(spec.ys) > 1:
-            self.widget.addLegend()
-        # Series accumulate discrete points, so mark each one.
-        # If we don't do this, the reuslt of  single shot will be invisible.
-        symbol = "o" if self.kind == PlotKind.SERIES else None
-        self.curves = []
-        for i, y in enumerate(spec.ys):
-            pen = _PENS[i % len(_PENS)]
-            self.curves.append(
-                self.widget.plot(
-                    pen=pen,
-                    name=_axis_label(y),
-                    symbol=symbol,
-                    symbolSize=2,
-                    symbolPen=pen,
-                    symbolBrush=pen,
-                )
-            )
-
-        self._xs: list[float] = []
-        self._ys: list[list[float]] = [[] for _ in spec.ys]
-        self._row_counter = 0
+        # Series accumulate discrete points, so mark each one
+        symbol = "o" if self.spec.kind is ViewKind.SERIES else None
+        self.curve = self.widget.plot(
+            pen=_PEN,
+            symbol=symbol,
+            symbolSize=2,
+            symbolPen=_PEN,
+            symbolBrush=_PEN,
+        )
 
         # Crosshair
-        self._y_unit = y0.unit or ""
         pen = pg.mkPen((120, 120, 120), width=1, style=Qt.PenStyle.DashLine)
         self._vline = pg.InfiniteLine(angle=90, movable=False, pen=pen)
         self._hline = pg.InfiniteLine(angle=0, movable=False, pen=pen)
@@ -137,38 +95,40 @@ class _PlotPanel:
             item.setVisible(True)
 
     def _format_coord_text(self, x: float, y: float) -> str:
-        """Cursor coordinates as unit-aware text (x is the shot index when no x-result)."""
-        if self.spec.x is not None:
-            xstr = pg.siFormat(x, suffix=self.spec.x.unit or "")
-        else:
+        """Cursor coordinates as unit-aware text."""
+        if self.spec.x_unit:
+            xstr = pg.siFormat(x, suffix=self.spec.x_unit)
+        elif self.spec.kind is ViewKind.SERIES and self.spec.x is None:
             xstr = f"shot {x:.0f}"
-        ystr = pg.siFormat(y, suffix=self._y_unit)
+        else:
+            xstr = pg.siFormat(x)
+        ystr = pg.siFormat(y, suffix=self.spec.unit or "")
         return f"{xstr},  {ystr}"
 
-    def update(self, frame: pd.DataFrame) -> None:
-        if self.kind == PlotKind.SERIES:
-            if self.spec.x is None:
-                n = len(frame)
-                xs = list(range(self._row_counter, self._row_counter + n))
-                self._row_counter += n
+    def repaint(self) -> None:
+        """Draw the handle's latest buffer if it changed, then mark it painted."""
+        if not self.handle.dirty:
+            return
+        # The lock-free buffer is only safe if pushes and repaints share a thread.
+        assert self.handle.push_thread in (None, threading.get_ident()), (
+            "view pushed from a different thread than the plot dock repaints on"
+        )
+        self.handle.clear_dirty()
+        if self.spec.kind is ViewKind.LINE:
+            y = self.handle.line
+            if y is None:
+                return
+            if self.spec.x is not None:
+                self.curve.setData(self.spec.x, y, connect="finite")
             else:
-                xs = _column(frame, self.spec.x)
-            self._xs.extend(xs)
-            for i, y in enumerate(self.spec.ys):
-                self._ys[i].extend(_column(frame, y))
-                self.curves[i].setData(self._xs, self._ys[i])
-        else:  # LINE: replace the curve with every row of this shot
-            xs = _join_rows(_column(frame, self.spec.x)) if self.spec.x is not None else None
-            for i, y in enumerate(self.spec.ys):
-                ys = _join_rows(_column(frame, y))
-                if xs is not None:
-                    self.curves[i].setData(xs, ys, connect="finite")
-                else:
-                    self.curves[i].setData(ys, connect="finite")
+                self.curve.setData(y, connect="finite")
+        else:
+            xs, ys = self.handle.series
+            self.curve.setData(xs, ys)
 
 
 class PlotDock(QDockWidget):
-    """Plot dock with multiple plot panels."""
+    """Plot dock with one tab per declared view, repainted from a timer."""
 
     def __init__(self, bridge: EngineBridge, parent: QWidget | None = None) -> None:
         super().__init__("Plots", parent)
@@ -180,11 +140,14 @@ class PlotDock(QDockWidget):
         layout.addWidget(self._tabs)
         self.setWidget(container)
 
-        self._panels: list[_PlotPanel] = []
+        self._panels: list[_ViewPanel] = []
         self._run_id: str | None = None
 
+        self._timer = QTimer(self)
+        self._timer.setInterval(_REPAINT_INTERVAL_MS)
+        self._timer.timeout.connect(self._tick)
+
         bridge.run_started.connect(self._on_run_started)
-        bridge.shot_completed.connect(self._on_shot_completed)
         bridge.run_finished.connect(self._on_run_finished)
 
     def _clear(self) -> None:
@@ -195,29 +158,30 @@ class PlotDock(QDockWidget):
                 widget.deleteLater()
         self._panels = []
 
+    def _tick(self) -> None:
+        for panel in self._panels:
+            panel.repaint()
+
     def _on_run_started(self, event: RunStarted) -> None:
-        if not event.plots:
+        self._timer.stop()
+        self._clear()
+        if not event.views:
             self._run_id = None
-            self._clear()
             self.hide()
             return
 
-        self._clear()
-        self._panels = [_PlotPanel(spec) for spec in event.plots]
+        self._panels = [_ViewPanel(handle) for handle in event.views]
         for i, panel in enumerate(self._panels):
-            self._tabs.addTab(panel.widget, _tab_label(panel.spec, i))
+            self._tabs.addTab(panel.widget, panel.spec.title or f"Plot {i + 1}")
 
         self._run_id = event.run_id
         self.show()
         self.raise_()
-
-    def _on_shot_completed(self, event: ShotCompleted) -> None:
-        if event.run_id != self._run_id:
-            return
-        for panel in self._panels:
-            panel.update(event.frame)
+        self._timer.start()
 
     def _on_run_finished(self, event: RunFinished) -> None:
-        # Stop updating, but leave the plot up.
+        # Stop repainting, but flush any final pushes and leave the plot up.
         if event.run_id == self._run_id:
+            self._timer.stop()
+            self._tick()
             self._run_id = None

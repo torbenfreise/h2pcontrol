@@ -1,8 +1,8 @@
-import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Experiment
 from h2pcontrol.controller.framework.parameters import ParamSpec, param
+from h2pcontrol.controller.framework.results import Results, result
 from h2pcontrol.controller.framework.scan import Axis, Scan
 
 
@@ -11,8 +11,11 @@ class ScanExperiment(Experiment):
     frequency = param(1.0, min=0.0, max=100.0, unit="Hz")
     mode = param("fast", choices=("fast", "slow"))
 
-    async def shot(self, ctx) -> pd.DataFrame:
-        return pd.DataFrame({"reading": [1.0]})
+    class Record(Results):
+        reading: float = result()
+
+    async def shot(self, ctx) -> list[Record]:
+        return [self.Record(reading=1.0)]
 
 
 class GroupedExperiment(Experiment):
@@ -20,8 +23,11 @@ class GroupedExperiment(Experiment):
     current = param(0.0, min=0.0, max=1.0, group="ramp")
     frequency = param(1.0, min=0.0, max=100.0)
 
-    async def shot(self, ctx) -> pd.DataFrame:
-        return pd.DataFrame({"reading": [1.0]})
+    class Record(Results):
+        reading: float = result()
+
+    async def shot(self, ctx) -> list[Record]:
+        return [self.Record(reading=1.0)]
 
 
 class TestAxis:

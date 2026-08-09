@@ -1,18 +1,21 @@
 import dataclasses
 
-import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import ParameterError, ParamSpec, param
+from h2pcontrol.controller.framework.results import Results, result
 
 
 class SimpleExperiment(Experiment):
     voltage = param(3.3, min=0.0, max=5.0, unit="V")
     count = param(10, min=1, max=100)
 
-    async def shot(self, ctx: "Context") -> pd.DataFrame:
-        return pd.DataFrame({"reading": [1.0, 2.0]})
+    class Record(Results):
+        reading: float = result()
+
+    async def shot(self, ctx: "Context") -> list[Record]:
+        return [self.Record(reading=1.0), self.Record(reading=2.0)]
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +72,14 @@ def test_setattr_rejects_out_of_bounds():
 
 
 # ---------------------------------------------------------------------------
-# Shot wrapping
+# Record assembly
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_shot_wrapping_adds_params_and_preserves_results():
+async def test_record_adds_params_and_preserves_results():
     exp = SimpleExperiment()
-    df = await exp.shot(Context(shot_idx=0))
+    df = await exp.record(Context(shot_idx=0))
 
     # result columns are under "result"
     assert ("result", "reading") in df.columns
@@ -92,16 +95,20 @@ async def test_shot_wrapping_adds_params_and_preserves_results():
 
 
 @pytest.mark.asyncio
-async def test_shot_wrapping_broadcasts_params_over_all_rows():
+async def test_record_broadcasts_params_over_all_rows():
     # A shot may return one row per hardware trigger; every row must carry
     # the full parameter set (no NaN padding on rows past the first).
     class BatchedExperiment(Experiment):
         voltage = param(3.3, min=0.0, max=5.0, unit="V")
 
-        async def shot(self, ctx: Context) -> pd.DataFrame:
-            return pd.DataFrame({"rep": range(5), "reading": [0.1, 0.2, 0.3, 0.4, 0.5]})
+        class Record(Results):
+            rep: int = result()
+            reading: float = result()
 
-    df = await BatchedExperiment().shot(Context(shot_idx=0))
+        async def shot(self, ctx: Context) -> list[Record]:
+            return [self.Record(rep=i, reading=r) for i, r in enumerate([0.1, 0.2, 0.3, 0.4, 0.5])]
+
+    df = await BatchedExperiment().record(Context(shot_idx=0))
 
     assert len(df) == 5
     assert list(df[("params", "voltage")]) == [3.3] * 5
@@ -109,19 +116,34 @@ async def test_shot_wrapping_broadcasts_params_over_all_rows():
 
 
 @pytest.mark.asyncio
-async def test_shot_wrapping_broadcasts_params_with_custom_index():
-    # Broadcasting must align even when the user returns a non-default index.
-    class CustomIndexExperiment(Experiment):
-        voltage = param(3.3, min=0.0, max=5.0, unit="V")
+async def test_record_every_row_carries_every_column():
+    # A record row always carries all declared columns, so a shot cannot produce
+    # a ragged frame — the row-count / column-set mismatch failure mode is gone.
+    class BatchedExperiment(Experiment):
+        class Record(Results):
+            a: float = result()
+            b: float = result()
 
-        async def shot(self, ctx: Context) -> pd.DataFrame:
-            return pd.DataFrame({"reading": [1.0, 2.0, 3.0]}, index=[10, 20, 30])
+        async def shot(self, ctx: Context) -> list[Record]:
+            return [self.Record(a=1.0, b=1.0), self.Record(a=2.0, b=2.0)]
 
-    df = await CustomIndexExperiment().shot(Context(shot_idx=0))
+    df = await BatchedExperiment().record(Context(shot_idx=0))
+    assert len(df) == 2
+    assert list(df[("result", "a")]) == [1.0, 2.0]
+    assert list(df[("result", "b")]) == [1.0, 2.0]
 
-    assert list(df.index) == [10, 20, 30]
-    assert list(df[("params", "voltage")]) == [3.3] * 3
-    assert not df.isna().any().any()
+
+@pytest.mark.asyncio
+async def test_record_view_only_shot_is_empty():
+    # An experiment that declares no record and returns [] records zero rows.
+    class ViewOnly(Experiment):
+        voltage = param(1.0)
+
+        async def shot(self, ctx: Context) -> list[Results]:
+            return []
+
+    df = await ViewOnly().record(Context(shot_idx=0))
+    assert len(df) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +176,26 @@ async def test_teardown_is_awaitable_noop():
 
 
 # ---------------------------------------------------------------------------
+# metadata hook
+# ---------------------------------------------------------------------------
+
+
+def test_metadata_default_is_empty():
+    assert SimpleExperiment().metadata() == {}
+
+
+def test_metadata_override_is_returned():
+    class WithMeta(Experiment):
+        def metadata(self):
+            return {"sample_interval_ns": "8.0"}
+
+        async def shot(self, ctx: Context) -> list[Results]:
+            return []
+
+    assert WithMeta().metadata() == {"sample_interval_ns": "8.0"}
+
+
+# ---------------------------------------------------------------------------
 # parameters() classmethod
 # ---------------------------------------------------------------------------
 
@@ -169,9 +211,7 @@ def test_parameters_returns_readonly_mapping():
 def test_parameters_includes_inherited():
     class Child(SimpleExperiment):
         extra = param(0.0, min=-1.0, max=1.0)
-
-        async def shot(self, ctx: Context) -> pd.DataFrame:
-            return pd.DataFrame({"x": [0.0]})
+        # inherits SimpleExperiment.shot / Record
 
     child_params = Child.parameters()
     assert "voltage" in child_params
@@ -193,8 +233,11 @@ def test_logger_uses_name_when_set():
     class Named(Experiment):
         name = "Rabi"
 
-        async def shot(self, ctx: Context) -> pd.DataFrame:
-            return pd.DataFrame({"x": [0.0]})
+        class Record(Results):
+            x: float = result()
+
+        async def shot(self, ctx: Context) -> list[Record]:
+            return [self.Record(x=0.0)]
 
     assert Named().logger.name == "experiment.Rabi"
 

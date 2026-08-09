@@ -1,29 +1,32 @@
 import asyncio
 
 import numpy as np
-import pandas as pd
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import result
+from h2pcontrol.controller.framework.results import Results, result
+from h2pcontrol.controller.framework.views import ViewKind
 
 
 class SineSeries(Experiment):
     """
     'Measures' one point of a sine wave form each shot.
-    Demonstrates the 'series' plot kind.
+    Demonstrates the SERIES view kind: each shot pushes one (x, y) point that
+    accumulates on the panel.
     """
 
     name = "Sine series"
     amplitude = param(1.0, min=0.0, max=10.0, unit="V")
     period = param(20.0, min=2.0, max=200.0, description="shots per cycle")
 
-    signal = result(float, unit="V", description="signal")
+    class Record(Results):
+        signal: float = result(unit="V", description="signal")
 
     async def setup(self) -> None:
-        self.plot(self.signal, title="Sine")
+        self.series = self.view("Sine", unit="V", kind=ViewKind.SERIES)
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
+    async def shot(self, ctx: Context) -> list[Record]:
         await asyncio.sleep(0.05)
         value = self.amplitude * np.sin(2 * np.pi * ctx.shot_idx / self.period)
-        return pd.DataFrame({"signal": [value]})
+        self.series.push(ctx.shot_idx, value)  # a point on the live series
+        return [self.Record(signal=value)]

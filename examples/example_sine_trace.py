@@ -1,33 +1,34 @@
 import asyncio
 
 import numpy as np
-import pandas as pd
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import result
+from h2pcontrol.controller.framework.results import Results, result
 
 
 class SineTrace(Experiment):
     """
     'Measures' an entire sine wave trace each shot.
-    Demonstrates the 'trace' plot kind.
+    Demonstrates a LINE view: the view is updated
+    with the new trace each shot.
     """
 
     name = "Sine trace"
     amplitude = param(1.0, min=0.0, max=10.0, unit="V")
     period = param(20.0, min=2.0, max=200.0, description="samples per cycle")
 
-    sample = result(np.ndarray, description="sample")
-    signal = result(np.ndarray, unit="V", description="signal")
+    class Record(Results):
+        signal: np.ndarray = result(unit="V", description="signal")
 
     async def setup(self) -> None:
-        self.plot(self.signal, x=self.sample, title="Sine")
+        self.sample = np.arange(200.0)
+        self.trace = self.view("Sine", x=self.sample, unit="V")
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
+    async def shot(self, ctx: Context) -> list[Record]:
         await asyncio.sleep(0.05)
-        sample = np.arange(200.0)
         # Drift the phase each shot
         phase = 2 * np.pi * ctx.shot_idx / 8
-        signal = self.amplitude * np.sin(2 * np.pi * sample / self.period + phase)
-        return pd.DataFrame({"sample": [sample], "signal": [signal]})
+        signal = self.amplitude * np.sin(2 * np.pi * self.sample / self.period + phase)
+        self.trace.push(signal)  # live, replaces the curve
+        return [self.Record(signal=signal)]

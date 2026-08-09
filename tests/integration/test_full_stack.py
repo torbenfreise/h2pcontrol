@@ -17,7 +17,7 @@ from h2pcontrol.controller.runtime.events import EngineEvent, EntryState, RunFin
 from h2pcontrol.controller.runtime.run_metadata import run_metadata
 from h2pcontrol.controller.runtime.session import Session
 from h2pcontrol.controller.runtime.spec import RunRequest
-from h2pcontrol.controller.runtime.store import RunStore
+from h2pcontrol.controller.runtime.store import RunSchema, RunStore
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +47,9 @@ async def test_full_stack_single_run(fake_device, experiment_file: Path, tmp_pat
     session = Session(manager_address=MANAGER_ADDRESS)
     results_root = str(tmp_path / "results")
 
-    def make_sink(request: RunRequest, run_id: str) -> RunStore:
+    def make_sink(request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
         metadata = run_metadata(request) | {"run_id": run_id}
-        return RunStore.create(results_root, request.experiment_name, attrs=metadata)
+        return RunStore.create(results_root, request.experiment_name, schema=schema, attrs=metadata)
 
     engine = RunEngine(
         client_provider=lambda: session.client,
@@ -105,9 +105,9 @@ async def test_full_stack_with_param_override(
     session = Session(manager_address=MANAGER_ADDRESS)
     results_root = str(tmp_path / "results")
 
-    def make_sink(request: RunRequest, run_id: str) -> RunStore:
+    def make_sink(request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
         metadata = run_metadata(request) | {"run_id": run_id}
-        return RunStore.create(results_root, request.experiment_name, attrs=metadata)
+        return RunStore.create(results_root, request.experiment_name, schema=schema, attrs=metadata)
 
     engine = RunEngine(
         client_provider=lambda: session.client,

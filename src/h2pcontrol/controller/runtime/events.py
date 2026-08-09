@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, NewType
 import pandas as pd
 
 if TYPE_CHECKING:
-    from ..framework.results import PlotSpec
+    from ..framework.views import ViewHandle
     from .spec import RunRequest
 
 
@@ -57,7 +57,7 @@ class RunStarted:
     run_id: RunId
     total_shots: int | None
     result_path: Path
-    plots: tuple[PlotSpec, ...] = ()
+    views: tuple[ViewHandle, ...] = ()
 
 
 @dataclass(frozen=True)

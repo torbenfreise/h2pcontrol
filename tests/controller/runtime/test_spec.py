@@ -1,10 +1,10 @@
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import ParameterError, param
+from h2pcontrol.controller.framework.results import Results, result
 from h2pcontrol.controller.runtime.spec import (
     CenteredAxis,
     ChoicesAxis,
@@ -21,8 +21,11 @@ class SpecExperiment(Experiment):
     delay = param(0.1, min=0.0, max=5.0, unit="s")
     mode = param("fast", choices=("fast", "slow"))
 
-    async def shot(self, ctx: Context) -> pd.DataFrame:
-        return pd.DataFrame({"x": [0.0]})
+    class Record(Results):
+        x: float = result()
+
+    async def shot(self, ctx: Context) -> list[Record]:
+        return [self.Record(x=0.0)]
 
 
 # ---------------------------------------------------------------------------

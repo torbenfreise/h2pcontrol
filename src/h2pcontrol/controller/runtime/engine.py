@@ -37,6 +37,7 @@ from .events import (
 )
 from .session import ClientProvider
 from .spec import RunRequest
+from .store import RunSchema
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ class ResultSink(Protocol):
 
 
 # type aliases so Engine.__init__() has a nicer function signature
-type SinkFactory = Callable[[RunRequest, RunId], ResultSink]
+type SinkFactory = Callable[[RunRequest, RunId, RunSchema], ResultSink]
 type Loader = Callable[[str, Path], type[Experiment]]
 
 
@@ -240,11 +241,16 @@ class RunEngine:
             # Stage 4: Run user-defined setup
             stage = "setup failed"
             await experiment.setup()
-            plots = experiment.plots()
+            views = experiment.views()
 
-            # Stage 5: Create data sink
+            # Stage 5: Create data sink, described by the experiment's declared specs
             stage = "data sink failed"
-            new_sink = await loop.run_in_executor(None, self._sink_factory, request, run_id)
+            schema = RunSchema(
+                results=cls.results(),
+                params=cls.parameters(),
+                metadata=experiment.metadata(),
+            )
+            new_sink = await loop.run_in_executor(None, self._sink_factory, request, run_id, schema)
             sink = new_sink
 
             # Stage 6: Compute shots and emit RunStarted
@@ -262,7 +268,7 @@ class RunEngine:
                     run_id=run_id,
                     total_shots=total_shots,
                     result_path=sink.path,
-                    plots=plots,
+                    views=views,
                 )
             )
 
@@ -276,7 +282,7 @@ class RunEngine:
                     for _ in range(repeats):
                         ctx = Context(shot_idx=shot_idx, run_id=run_id, total_shots=total_shots)
                         stage = "shot failed"
-                        frame = await experiment.shot(ctx)
+                        frame = await experiment.record(ctx)
                         stage = "saving shot failed"
                         await loop.run_in_executor(None, sink.save_shot, shot_idx, frame)
                         shots_completed += 1
