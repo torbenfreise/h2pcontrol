@@ -133,5 +133,13 @@ class RunRequest:
 
     def __post_init__(self) -> None:
         # Freeze param_values into an immutable mapping.
-        frozen = MappingProxyType(dict(self.param_values))
-        object.__setattr__(self, "param_values", frozen)
+        object.__setattr__(self, "param_values", MappingProxyType(dict(self.param_values)))
+
+    # A request travels to the writer process, and mappingproxy has no pickle
+    # support — unwrap it on the way out and re-freeze on the way in.
+    def __getstate__(self) -> dict[str, Any]:
+        return {**self.__dict__, "param_values": dict(self.param_values)}
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.__dict__.update(state)
+        object.__setattr__(self, "param_values", MappingProxyType(dict(state["param_values"])))

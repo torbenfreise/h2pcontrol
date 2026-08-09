@@ -12,10 +12,9 @@ from h2pcontrol.controller.runtime.events import (
     RunStarted,
     ShotCompleted,
 )
-from h2pcontrol.controller.runtime.run_metadata import run_metadata
 from h2pcontrol.controller.runtime.session import Session
 from h2pcontrol.controller.runtime.spec import LinearAxis, ListAxis, RunRequest, ScanSpec
-from h2pcontrol.controller.runtime.store import RunSchema, RunStore
+from h2pcontrol.controller.runtime.store import RunStoreFactory
 
 pytestmark = pytest.mark.asyncio
 
@@ -26,15 +25,11 @@ def experiment_file(experiments_dir: Path) -> Path:
 
 
 def _engine(results_root: str) -> RunEngine:
+    """A fully wired engine — real RunStore, real writer process."""
     session = Session(manager_address="localhost:50051")
-
-    def make_sink(request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
-        metadata = run_metadata(request) | {"run_id": run_id}
-        return RunStore.create(results_root, request.experiment_name, schema=schema, attrs=metadata)
-
     return RunEngine(
         client_provider=lambda: session.client,
-        sink_factory=make_sink,
+        sink_factory=RunStoreFactory(results_root),
         loader=session.load_experiment_from_source,
     )
 

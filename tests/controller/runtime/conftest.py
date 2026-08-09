@@ -15,10 +15,11 @@ from h2pcontrol.sdk.client import Client
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
 from h2pcontrol.controller.framework.results import Results, result
-from h2pcontrol.controller.runtime.engine import Loader, RunEngine, SinkFactory
+from h2pcontrol.controller.runtime.engine import Loader, RunEngine
 from h2pcontrol.controller.runtime.events import RunId
 from h2pcontrol.controller.runtime.spec import RunRequest
 from h2pcontrol.controller.runtime.store import RunSchema
+from h2pcontrol.controller.runtime.writer import InProcessWriter, SinkFactory, WriterFactory
 
 
 def no_client() -> Client:
@@ -118,11 +119,16 @@ async def make_engine(sink_factory: SinkFactory):
         *,
         client_provider: Callable[[], Client] = no_client,
         sink: SinkFactory | None = None,
+        writer: WriterFactory = InProcessWriter,
     ) -> RunEngine:
+        # These tests observe the sink directly and build it from closures, so
+        # they keep it in this process. The default ProcessWriter is covered by
+        # test_writer.py and the end-to-end tests.
         engine = RunEngine(
             client_provider=client_provider,
             sink_factory=sink or sink_factory,
             loader=loader,
+            writer_factory=writer,
         )
         engines.append(engine)
         return engine

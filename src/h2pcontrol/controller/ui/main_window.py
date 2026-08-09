@@ -22,10 +22,9 @@ from ..runtime.events import (
     RunStarted,
 )
 from ..runtime.log_aggregator import LogAggregator
-from ..runtime.run_metadata import run_metadata
 from ..runtime.session import Session
 from ..runtime.spec import RunRequest
-from ..runtime.store import RunSchema, RunStore
+from ..runtime.store import RunStoreFactory
 from .engine_bridge import EngineBridge
 from .experiment_view import ExperimentView
 from .log_dock import LogDock
@@ -44,7 +43,9 @@ class MainWindow(QMainWindow):
         self._settings = QSettings("h2pcontrol", "controller")
         address = self._settings.value("manager_address", "localhost:50051")
         self._session = Session(manager_address=str(address))
-        self._results_root = str(self._settings.value("results_root", "results"))
+        # Held rather than inlined: the engine ships this factory to the writer
+        # process, and Settings retargets it by assigning to ``root``.
+        self._sink_factory = RunStoreFactory(str(self._settings.value("results_root", "results")))
 
         self._experiment_path: Path | None = None
         self._experiment_name: str = ""
@@ -53,7 +54,7 @@ class MainWindow(QMainWindow):
 
         self._engine = RunEngine(
             client_provider=lambda: self._session.client,
-            sink_factory=self._make_sink,
+            sink_factory=self._sink_factory,
             loader=self._session.load_experiment_from_source,
         )
         self._bridge = EngineBridge(self._engine, self)
@@ -134,12 +135,6 @@ class MainWindow(QMainWindow):
         self._bridge.run_started.connect(self._on_run_started)
         self._bridge.run_finished.connect(self._on_run_finished)
 
-    def _make_sink(self, request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
-        metadata = run_metadata(request) | {"run_id": run_id}
-        return RunStore.create(
-            self._results_root, request.experiment_name, schema=schema, attrs=metadata
-        )
-
     def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
         task = asyncio.ensure_future(coro)
         self._bg_tasks.add(task)
@@ -214,12 +209,12 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Run Failed", message))
 
     def _on_settings(self) -> None:
-        dlg = SettingsDialog(self._session.manager_address, self._results_root, self)
+        dlg = SettingsDialog(self._session.manager_address, self._sink_factory.root, self)
         if dlg.exec():
             address = dlg.address()
             self._settings.setValue("manager_address", address)
-            self._results_root = dlg.results_root()
-            self._settings.setValue("results_root", self._results_root)
+            self._sink_factory.root = dlg.results_root()
+            self._settings.setValue("results_root", self._sink_factory.root)
             self._spawn(self._apply_address(address))
 
     async def _apply_address(self, address: str) -> None:

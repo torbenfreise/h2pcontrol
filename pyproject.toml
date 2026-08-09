@@ -45,7 +45,9 @@ select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "T20"]
 ignore = ["B008"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# writer_probes must be importable by name: the writer process is spawned, so
+# it re-imports the probe module rather than inheriting it.
+pythonpath = ["src", "tests/controller/runtime"]
 markers = ["integration: requires a running h2pmanager on localhost:50051"]
 
 [project.scripts]
@@ -65,6 +67,7 @@ show_missing = true
 
 [tool.pyright]
 pythonVersion = "3.12"
+extraPaths = ["tests/controller/runtime"]  # see pytest's pythonpath
 
 [tool.uv]
 # The official protocolbuffers-pyi and mypy-protobuf stubs both ship the same

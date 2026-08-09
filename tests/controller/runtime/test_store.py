@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pickle
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -442,3 +444,33 @@ class TestTraces:
             stored = f.root.traces.shot_00000.result_trace.read()
             assert stored.shape == (1, 500)
             assert np.all(stored == np.float32(2.0))
+
+
+class TestSchemaPickling:
+    """The schema travels to the writer process, so it has to survive a pickle."""
+
+    class Probe(Experiment):
+        voltage = param(3.3, min=0.0, max=5.0, unit="V")
+
+        class Record(Results):
+            mean_v: float = result(unit="V")
+            trace: np.ndarray = result(description="raw samples")
+
+        async def shot(self, ctx: Context) -> list[Record]:
+            return [self.Record(mean_v=0.0, trace=np.zeros(4))]
+
+    def test_round_trips_specs_from_a_live_experiment(self):
+        # parameters()/results() hand out mappingproxies, which do not pickle;
+        # build the schema exactly as the engine does so that shows up here.
+        schema = RunSchema(
+            results=self.Probe.results(),
+            params=self.Probe.parameters(),
+            metadata={"n_samples": "4"},
+        )
+
+        restored = pickle.loads(pickle.dumps(schema))
+
+        assert restored.columns() == schema.columns()
+        assert dict(restored.metadata) == {"n_samples": "4"}
+        assert restored.results["trace"].dtype is np.ndarray
+        assert restored.params["voltage"].unit == "V"

@@ -25,7 +25,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 import pandas as pd
 
@@ -48,6 +48,7 @@ from .rpc_instrumentation import InstrumentedClient, RpcLog
 from .session import ClientProvider
 from .spec import RunRequest
 from .store import RunSchema
+from .writer import ProcessWriter, ShotWriter, SinkFactory, WriterFactory
 
 logger = logging.getLogger(__name__)
 
@@ -109,77 +110,8 @@ _TERMINAL = (
 )
 
 
-class ResultSink(Protocol):
-    path: Path
-
-    def save_shot(self, shot_idx: int, frame: pd.DataFrame) -> None: ...
-    def close(self) -> None: ...
-
-
-# type aliases so Engine.__init__() has a nicer function signature
-type SinkFactory = Callable[[RunRequest, RunId, RunSchema], ResultSink]
+# type alias so Engine.__init__() has a nicer function signature
 type Loader = Callable[[str, Path], type[Experiment]]
-
-
-class _BackgroundSaver:
-    """Writes shots on a background task so acquiring the next shot overlaps
-    persisting the previous one.
-
-    A single writer task drains a bounded queue, calling ``sink.save_shot`` in
-    a thread executor one shot at a time — the sink is a single-writer HDF5
-    file, so saves must stay ordered and never overlap each other (or
-    ``sink.close``). The bound is backpressure: ``save`` blocks once ``maxsize``
-    shots are still unwritten, so a slow disk throttles acquisition instead of
-    growing memory without limit. The first write error is re-raised from
-    ``save`` or ``aclose`` so a failed write fails the run as a serial save did.
-    """
-
-    def __init__(
-        self,
-        sink: ResultSink,
-        loop: asyncio.AbstractEventLoop,
-        maxsize: int = 4,
-    ) -> None:
-        self._sink = sink
-        self._loop = loop
-        self._queue: asyncio.Queue[tuple[int, pd.DataFrame]] = asyncio.Queue(maxsize)
-        self._error: BaseException | None = None
-        self._task = loop.create_task(self._drain())
-
-    async def _drain(self) -> None:
-        while True:
-            shot_idx, frame = await self._queue.get()
-            try:
-                # Once a write has failed, keep draining without saving so the
-                # queue empties (producers unblock) and ``aclose`` can join.
-                if self._error is None:
-                    await self._loop.run_in_executor(None, self._sink.save_shot, shot_idx, frame)
-            except Exception as exc:  # surfaced to the run via save()/aclose()
-                self._error = exc
-            finally:
-                self._queue.task_done()
-
-    async def save(self, shot_idx: int, frame: pd.DataFrame) -> None:
-        """Queue a shot for writing, blocking while the buffer is full.
-
-        Re-raises the first background write error, if one has occurred.
-        """
-        if self._error is not None:
-            raise self._error
-        await self._queue.put((shot_idx, frame))
-
-    async def aclose(self) -> None:
-        """Flush queued writes, stop the writer, and re-raise the first error.
-
-        Returns only once the writer is idle, so it is safe to close the sink
-        afterwards.
-        """
-        await self._queue.join()  # all queued writes done; writer idle on get()
-        self._task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await self._task
-        if self._error is not None:
-            raise self._error
 
 
 class _Entry:
@@ -197,10 +129,12 @@ class RunEngine:
         client_provider: ClientProvider,
         sink_factory: SinkFactory,
         loader: Loader,
+        writer_factory: WriterFactory = ProcessWriter,
     ) -> None:
         self._client_provider = client_provider
         self._sink_factory = sink_factory
         self._loader = loader
+        self._writer_factory = writer_factory
 
         self._state = EngineState.IDLE
         self._entries: dict[RunId, _Entry] = {}
@@ -330,8 +264,8 @@ class RunEngine:
         self._set_state(EngineState.RUNNING)
         self._emit(self._queue_changed())
 
-        sink: ResultSink | None = None
-        saver: _BackgroundSaver | None = None
+        writer: ShotWriter | None = None
+        result_path: Path | None = None
         experiment: Experiment | None = None
         shots_completed = 0
         outcome = EntryState.COMPLETED
@@ -370,16 +304,17 @@ class RunEngine:
             await experiment.setup()
             views = experiment.views()
 
-            # Stage 5: Create data sink, described by the experiment's declared specs
+            # Stage 5: Create data sink, described by the experiment's declared specs.
+            # The writer owns the sink from here on — by default in its own
+            # process, so persisting a shot costs the run loop only a hand-off.
             stage = "data sink failed"
             schema = RunSchema(
                 results=cls.results(),
                 params=cls.parameters(),
                 metadata=experiment.metadata(),
             )
-            new_sink = await loop.run_in_executor(None, self._sink_factory, request, run_id, schema)
-            sink = new_sink
-            saver = _BackgroundSaver(sink, loop)
+            writer = self._writer_factory(self._sink_factory, request, run_id, schema)
+            result_path = await writer.open()
 
             # Stage 6: Compute shots and emit RunStarted
             points = list(scan.points()) if scan else [{}]
@@ -395,7 +330,7 @@ class RunEngine:
                 RunStarted(
                     run_id=run_id,
                     total_shots=total_shots,
-                    result_path=sink.path,
+                    result_path=result_path,
                     views=views,
                 )
             )
@@ -420,12 +355,12 @@ class RunEngine:
                         with timings.span("shot"):
                             frame = await experiment.record(ctx)
                         stage = "saving shot failed"
-                        # Hand the frame to the background writer and move on;
-                        # the actual write overlaps the next shot. This span now
-                        # measures only enqueue time — nonzero means backpressure
-                        # (writes falling behind acquisition), not write cost.
+                        # Hand the frame to the writer and move on; the actual
+                        # write overlaps the next shot. This span now measures
+                        # only the hand-off (pickle + enqueue) — a large value
+                        # means backpressure, not write cost.
                         with timings.span("save"):
-                            await saver.save(shot_idx, frame)
+                            await writer.save(shot_idx, frame)
                         shots_completed += 1
                         # Subscribers run synchronously, so with direct Qt
                         # connections this span includes UI/plot updates.
@@ -472,34 +407,31 @@ class RunEngine:
                 except Exception:
                     logger.exception("teardown() raised", extra={"run_id": run_id})
 
-            # Flush pending background writes before closing the sink: the
-            # writer and sink.close() share one HDF5 handle and must not overlap.
-            if saver is not None:
+            # Flush queued writes before closing: the writer and the sink's
+            # close share one HDF5 handle and must not overlap.
+            if writer is not None:
                 try:
-                    await asyncio.shield(saver.aclose())
+                    await asyncio.shield(writer.flush())
                 except asyncio.CancelledError:
-                    logger.warning(
-                        "background save flush interrupted by shutdown", extra={"run_id": run_id}
-                    )
+                    logger.warning("shot flush interrupted by shutdown", extra={"run_id": run_id})
                 except Exception as exc:
+                    logger.exception("flushing pending shots failed", extra={"run_id": run_id})
                     if outcome == EntryState.COMPLETED:
                         outcome = EntryState.FAILED
                         error_msg = f"saving shot failed: {exc}"
-                        logger.exception("background save failed", extra={"run_id": run_id})
 
-            if sink is not None:
                 try:
-                    await asyncio.shield(loop.run_in_executor(None, sink.close))
+                    await asyncio.shield(writer.aclose())
                 except asyncio.CancelledError:
                     logger.warning("sink close interrupted by shutdown", extra={"run_id": run_id})
                 except Exception:
-                    logger.exception("sink.close() raised", extra={"run_id": run_id})
+                    logger.exception("closing the shot writer raised", extra={"run_id": run_id})
 
-            if sink is not None and (timing_rows or rpc_log.records):
+            if result_path is not None and (timing_rows or rpc_log.records):
                 try:
                     await asyncio.shield(
                         loop.run_in_executor(
-                            None, _write_timing_logs, sink.path, timing_rows, rpc_log.records
+                            None, _write_timing_logs, result_path, timing_rows, rpc_log.records
                         )
                     )
                 except asyncio.CancelledError:

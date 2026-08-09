@@ -35,6 +35,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from types import MappingProxyType
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -42,6 +44,8 @@ import tables
 
 from ..framework.parameters import ParamSpec
 from ..framework.results import ResultSpec
+from .run_metadata import run_metadata
+from .spec import RunRequest
 
 _UNSAFE = re.compile(r'[\\/:*?"<>|]')
 
@@ -88,6 +92,19 @@ class RunSchema:
     results: Mapping[str, ResultSpec]
     params: Mapping[str, ParamSpec]
     metadata: Mapping[str, str] = field(default_factory=dict)
+
+    # A schema travels to the writer process, and the mappingproxy that
+    # Experiment.results()/parameters() hand out has no pickle support.
+    def __getstate__(self) -> dict[str, dict[str, Any]]:
+        return {
+            "results": dict(self.results),
+            "params": dict(self.params),
+            "metadata": dict(self.metadata),
+        }
+
+    def __setstate__(self, state: dict[str, dict[str, Any]]) -> None:
+        for name, mapping in state.items():
+            object.__setattr__(self, name, MappingProxyType(mapping))
 
     def columns(self) -> dict[str, _Column]:
         cols: dict[str, _Column] = {}
@@ -271,3 +288,20 @@ class RunStore:
         flat = frame.copy()
         flat.columns = ["_".join(str(p) for p in c).strip("_") for c in frame.columns]
         return flat
+
+
+@dataclass
+class RunStoreFactory:
+    """Creates one :class:`RunStore` per run under *root*.
+
+    A dataclass rather than a closure or a bound method because the writer
+    process builds the sink itself, so the factory is pickled and sent there.
+    ``root`` stays mutable so the GUI can retarget it from Settings without
+    rebuilding the engine.
+    """
+
+    root: str
+
+    def __call__(self, request: RunRequest, run_id: str, schema: RunSchema) -> RunStore:
+        attrs = run_metadata(request) | {"run_id": run_id}
+        return RunStore.create(self.root, request.experiment_name, schema=schema, attrs=attrs)

@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 
 import pytest
@@ -197,3 +198,27 @@ class TestRunRequest:
             scan_repeats=3,
         )
         assert req.scan_repeats == 3
+
+
+class TestPickling:
+    """A request travels to the writer process, so it has to survive a pickle."""
+
+    def test_round_trips(self):
+        scan = ScanSpec(axes=(LinearAxis(param="voltage", start=0.0, stop=5.0, steps=3),))
+        req = RunRequest(
+            experiment_path=Path("/tmp/test.py"),
+            experiment_name="Test",
+            param_values={"voltage": 3.3, "mode": "fast"},
+            source="# source",
+            scan=scan,
+            repeats_per_point=2,
+            scan_repeats=3,
+        )
+
+        restored = pickle.loads(pickle.dumps(req))
+
+        assert restored == req
+        assert dict(restored.param_values) == {"voltage": 3.3, "mode": "fast"}
+        # Still immutable on the far side.
+        with pytest.raises(TypeError):
+            restored.param_values["voltage"] = 0.0  # type: ignore[index]
