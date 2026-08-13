@@ -6,7 +6,12 @@ from typing import cast
 import numpy as np
 import pytest
 
-from h2pcontrol.controller.framework.views import ViewHandle, ViewKind, ViewSpec
+from h2pcontrol.controller.framework.views import (
+    LineViewHandle,
+    SeriesViewHandle,
+    ViewHandle,
+    ViewSpec,
+)
 from h2pcontrol.controller.runtime.engine import RunEngine
 from h2pcontrol.controller.runtime.events import (
     EntryState,
@@ -46,17 +51,18 @@ def dock(qtbot, fake_engine: FakeEngine) -> PlotDock:
     return d
 
 
-def _series(title: str = "V", unit: str | None = None, x_unit: str | None = None) -> ViewHandle:
-    return ViewHandle(ViewSpec(title=title, kind=ViewKind.SERIES, unit=unit, x_unit=x_unit))
+def _series(
+    title: str = "V", y_unit: str | None = None, x_unit: str | None = None
+) -> SeriesViewHandle:
+    return SeriesViewHandle(ViewSpec(title=title, y_unit=y_unit, x_unit=x_unit))
 
 
 def _line(
     title: str = "V",
-    x: np.ndarray | None = None,
-    unit: str | None = None,
+    y_unit: str | None = None,
     x_unit: str | None = None,
-) -> ViewHandle:
-    return ViewHandle(ViewSpec(title=title, kind=ViewKind.LINE, x=x, unit=unit, x_unit=x_unit))
+) -> LineViewHandle:
+    return LineViewHandle(ViewSpec(title=title, y_unit=y_unit, x_unit=x_unit))
 
 
 def _started(run_id: str, views: tuple[ViewHandle, ...]) -> RunStarted:
@@ -139,19 +145,37 @@ def test_multiple_pushes_coalesce_into_one_tick(dock, fake_engine):
 
 
 def test_line_push_replaces_curve(dock, fake_engine):
-    view = _line(x=np.arange(3.0))
+    view = _line()
     fake_engine.emit(_started("r1", (view,)))
 
-    view.push(np.array([1.0, 2.0, 3.0]))
+    view.push(np.arange(3.0), np.array([1.0, 2.0, 3.0]))
     dock._tick()
     xs, ys = dock._panels[0].curve.getData()
     assert list(xs) == [0.0, 1.0, 2.0]
     assert list(ys) == [1.0, 2.0, 3.0]
 
-    view.push(np.array([4.0, 5.0, 6.0]))  # replaces, not appends
+    view.push(np.arange(3.0), np.array([4.0, 5.0, 6.0]))  # replaces, not appends
     dock._tick()
     _, ys = dock._panels[0].curve.getData()
     assert list(ys) == [4.0, 5.0, 6.0]
+
+
+def test_line_push_moves_and_resizes_the_x_axis(dock, fake_engine):
+    """Each push carries its own grid, so x may shift and change length."""
+    view = _line()
+    fake_engine.emit(_started("r1", (view,)))
+
+    view.push(np.array([10.0, 20.0, 30.0]), np.array([1.0, 2.0, 3.0]))
+    dock._tick()
+    xs, ys = dock._panels[0].curve.getData()
+    assert list(xs) == [10.0, 20.0, 30.0]
+    assert list(ys) == [1.0, 2.0, 3.0]
+
+    view.push(np.array([0.0, 5.0]), np.array([4.0, 5.0]))
+    dock._tick()
+    xs, ys = dock._panels[0].curve.getData()
+    assert list(xs) == [0.0, 5.0]
+    assert list(ys) == [4.0, 5.0]
 
 
 def test_clean_panel_is_not_redrawn(dock, fake_engine):
@@ -186,13 +210,21 @@ def test_run_finished_flushes_and_stops(dock, fake_engine):
 
 
 def test_crosshair_label_uses_axis_units(qtbot):
-    panel = _ViewPanel(_line(x=np.arange(3.0), unit="V", x_unit="s"))
+    panel = _ViewPanel(_line(y_unit="V", x_unit="s"))
     qtbot.addWidget(panel.widget)
     text = panel._format_coord_text(1e-6, 0.5)
     assert "s" in text and "V" in text
 
 
 def test_crosshair_label_shows_shot_axis_for_bare_series(qtbot):
-    panel = _ViewPanel(_series(unit="V"))
+    panel = _ViewPanel(_series(y_unit="V"))
     qtbot.addWidget(panel.widget)
     assert "shot" in panel._format_coord_text(3.0, 0.5)
+
+
+def test_series_with_x_unit_labels_the_axis_by_unit(qtbot):
+    """A series against a measured quantity is not a shot axis."""
+    panel = _ViewPanel(_series(y_unit="V", x_unit="V"))
+    qtbot.addWidget(panel.widget)
+    assert "shot" not in panel._format_coord_text(3.0, 0.5)
+    assert "V" in panel.widget.getAxis("bottom").labelString()
