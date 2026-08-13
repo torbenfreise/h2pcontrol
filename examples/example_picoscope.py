@@ -51,6 +51,7 @@ from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
 from h2pcontrol.controller.framework.results import Results, result
 from h2pcontrol.controller.framework.stubs import service_stub
+from h2pcontrol.controller.framework.views import ViewKind
 
 if TYPE_CHECKING:
     from grpc.aio import UnaryStreamCall
@@ -125,8 +126,8 @@ class PicoscopeRapidBlockExperiment(Experiment):
         # The sample grid is fixed by the timebase, so build it once here rather
         # than storing it per capture.
         self._sample_interval_ns = timebase.sample_interval_ns
-        times_us = np.arange(self.post_samples) * self._sample_interval_ns / 1000.0
-        self.captures = self.view("Picoscope captures", x=times_us, x_unit="us", unit="V")
+        self._times_us = np.arange(self.post_samples) * self._sample_interval_ns / 1000.0
+        self.captures = self.view("Picoscope captures", ViewKind.LINE, x_unit="us", y_unit="V")
 
     def metadata(self) -> Mapping[str, str]:
         # The sample grid is constant for the run and lives on the view (UI-only),
@@ -166,7 +167,7 @@ class PicoscopeRapidBlockExperiment(Experiment):
                 )
 
             samples = np.asarray(capture.traces[0].samples, dtype=np.float32)
-            self.captures.push(samples)  # update plot
+            self.captures.push(self._times_us, samples)  # update plot
             captures.append((capture, samples))
 
         await self.pulseblaster.Stop(StopRequest())

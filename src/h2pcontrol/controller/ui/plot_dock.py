@@ -7,7 +7,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QDockWidget, QTabWidget, QVBoxLayout, QWidget
 
-from ..framework.views import ViewHandle, ViewKind
+from ..framework.views import SeriesViewHandle, ViewHandle
 
 if TYPE_CHECKING:
     from ..runtime.events import RunFinished, RunStarted
@@ -30,19 +30,20 @@ class _ViewPanel:
     def __init__(self, handle: ViewHandle) -> None:
         self.handle = handle
         self.spec = handle.spec
+        self._is_series = isinstance(handle, SeriesViewHandle)
+
+        self._shot_axis = self._is_series and not self.spec.x_unit
         self.widget = pg.PlotWidget()
         self.widget.showGrid(x=True, y=True, alpha=0.3)
 
-        if self.spec.x_unit:
-            self._set_axis("bottom", "", self.spec.x_unit)
-        elif self.spec.kind is ViewKind.SERIES and self.spec.x is None:
+        if self._shot_axis:
             self._set_axis("bottom", "shot", None)
         else:
-            self._set_axis("bottom", "", None)
-        self._set_axis("left", self.spec.title, self.spec.unit)
+            self._set_axis("bottom", "", self.spec.x_unit)
+        self._set_axis("left", self.spec.title, self.spec.y_unit)
 
         # Series accumulate discrete points, so mark each one
-        symbol = "o" if self.spec.kind is ViewKind.SERIES else None
+        symbol = "o" if self._is_series else None
         self.curve = self.widget.plot(
             pen=_PEN,
             symbol=symbol,
@@ -96,14 +97,8 @@ class _ViewPanel:
 
     def _format_coord_text(self, x: float, y: float) -> str:
         """Cursor coordinates as unit-aware text."""
-        if self.spec.x_unit:
-            xstr = pg.siFormat(x, suffix=self.spec.x_unit)
-        elif self.spec.kind is ViewKind.SERIES and self.spec.x is None:
-            xstr = f"shot {x:.0f}"
-        else:
-            xstr = pg.siFormat(x)
-        ystr = pg.siFormat(y, suffix=self.spec.unit or "")
-        return f"{xstr},  {ystr}"
+        xstr = f"shot {x:.0f}" if self._shot_axis else pg.siFormat(x, suffix=self.spec.x_unit or "")
+        return f"{xstr},  {pg.siFormat(y, suffix=self.spec.y_unit or '')}"
 
     def repaint(self) -> None:
         """Draw the handle's latest buffer if it changed, then mark it painted."""
@@ -114,17 +109,11 @@ class _ViewPanel:
             "view pushed from a different thread than the plot dock repaints on"
         )
         self.handle.clear_dirty()
-        if self.spec.kind is ViewKind.LINE:
-            y = self.handle.line
-            if y is None:
-                return
-            if self.spec.x is not None:
-                self.curve.setData(self.spec.x, y, connect="finite")
-            else:
-                self.curve.setData(y, connect="finite")
-        else:
-            xs, ys = self.handle.series
-            self.curve.setData(xs, ys)
+        data = self.handle.plot_data()
+        if data is None:
+            return
+        x, y = data
+        self.curve.setData(x, y, connect="finite")
 
 
 class PlotDock(QDockWidget):

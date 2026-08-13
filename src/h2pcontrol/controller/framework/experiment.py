@@ -5,13 +5,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, ClassVar, final
 
-import numpy as np
 import pandas as pd
 
 from .parameters import ParamSpec
 from .results import Results, ResultSpec
 from .stubs import StubSpec
-from .views import ViewHandle, ViewKind, ViewSpec
+from .views import LineViewHandle, SeriesViewHandle, ViewHandle, ViewKind, ViewSpec
 
 
 @dataclass(frozen=True)
@@ -116,21 +115,15 @@ class Experiment(ABC):
     def view(
         self,
         title: str,
-        *,
-        x: np.ndarray | Sequence[float] | None = None,
+        kind: ViewKind,
         x_unit: str | None = None,
-        unit: str | None = None,
-        kind: ViewKind | None = None,
+        y_unit: str | None = None,
     ) -> ViewHandle:
-        """Declare a live view and return a handle to push values to. Call from ``setup()``.
-
-        Views are UI-only: pushed values are drawn but never stored.
-        """
-        if kind is None:
-            kind = ViewKind.LINE if x is not None else ViewKind.SERIES
-        x_values = None if x is None else np.asarray(x, dtype=float)
-        spec = ViewSpec(title=title, kind=kind, unit=unit, x=x_values, x_unit=x_unit)
-        handle = ViewHandle(spec)
+        """Declare a live view and return a handle to push values to. Call from ``setup()``."""
+        spec = ViewSpec(title=title, x_unit=x_unit, y_unit=y_unit)
+        handle: ViewHandle = (
+            LineViewHandle(spec) if kind is ViewKind.LINE else SeriesViewHandle(spec)
+        )
         if "_views" not in self.__dict__:
             self._views = []
         self._views.append(handle)

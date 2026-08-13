@@ -5,6 +5,7 @@ import numpy as np
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
 from h2pcontrol.controller.framework.results import Results, result
+from h2pcontrol.controller.framework.views import ViewKind
 
 
 class SineTrace(Experiment):
@@ -23,12 +24,12 @@ class SineTrace(Experiment):
 
     async def setup(self) -> None:
         self.sample = np.arange(200.0)
-        self.trace = self.view("Sine", x=self.sample, unit="V")
+        self.trace = self.view("Sine", ViewKind.LINE, y_unit="V")
 
     async def shot(self, ctx: Context) -> list[Record]:
         await asyncio.sleep(0.05)
         # Drift the phase each shot
         phase = 2 * np.pi * ctx.shot_idx / 8
         signal = self.amplitude * np.sin(2 * np.pi * self.sample / self.period + phase)
-        self.trace.push(signal)  # live, replaces the curve
+        self.trace.push(self.sample, signal)  # live, replaces the curve
         return [self.Record(signal=signal)]

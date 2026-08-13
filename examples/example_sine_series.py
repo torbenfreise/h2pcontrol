@@ -23,7 +23,7 @@ class SineSeries(Experiment):
         signal: float = result(unit="V", description="signal")
 
     async def setup(self) -> None:
-        self.series = self.view("Sine", unit="V", kind=ViewKind.SERIES)
+        self.series = self.view("Sine", ViewKind.SERIES, y_unit="V")
 
     async def shot(self, ctx: Context) -> list[Record]:
         await asyncio.sleep(0.05)
