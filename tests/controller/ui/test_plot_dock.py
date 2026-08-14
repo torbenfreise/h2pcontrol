@@ -10,6 +10,7 @@ from h2pcontrol.controller.framework.views import (
     LineViewHandle,
     SeriesViewHandle,
     ViewHandle,
+    ViewKind,
     ViewSpec,
 )
 from h2pcontrol.controller.runtime.engine import RunEngine
@@ -54,7 +55,9 @@ def dock(qtbot, fake_engine: FakeEngine) -> PlotDock:
 def _series(
     title: str = "V", y_unit: str | None = None, x_unit: str | None = None
 ) -> SeriesViewHandle:
-    return SeriesViewHandle(ViewSpec(title=title, y_unit=y_unit, x_unit=x_unit))
+    return SeriesViewHandle(
+        ViewSpec(title=title, kind=ViewKind.SERIES, y_unit=y_unit, x_unit=x_unit)
+    )
 
 
 def _line(
@@ -62,7 +65,7 @@ def _line(
     y_unit: str | None = None,
     x_unit: str | None = None,
 ) -> LineViewHandle:
-    return LineViewHandle(ViewSpec(title=title, y_unit=y_unit, x_unit=x_unit))
+    return LineViewHandle(ViewSpec(title=title, kind=ViewKind.LINE, y_unit=y_unit, x_unit=x_unit))
 
 
 def _started(run_id: str, views: tuple[ViewHandle, ...]) -> RunStarted:

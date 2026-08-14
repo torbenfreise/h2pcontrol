@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal, overload
 
 import numpy as np
 import numpy.typing as npt
@@ -14,7 +14,7 @@ XY = npt.NDArray[np.float64] | list[float]
 
 
 class ViewKind(StrEnum):
-    """How a view draws its data. Selects the handle ``Experiment.view()`` returns."""
+    """How a view draws its data. Selects the handle a declared view resolves to."""
 
     LINE = "line"
     """The curve is replaced with the most recent push (array-valued x and y)."""
@@ -23,17 +23,49 @@ class ViewKind(StrEnum):
     """Points accumulate across pushes; each push supplies one scalar (x, y)."""
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(eq=False)
 class ViewSpec:
-    """How a live panel is labelled. Declared in ``setup()``, read by the UI."""
+    """A live panel, declared in the class body by :func:`view`."""
 
     title: str
+    kind: ViewKind
     x_unit: str | None = None
     y_unit: str | None = None
 
+    # Inferred from attribute declaration
+    name: str | None = field(default=None, init=False)
+
+    # descriptor interface
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
+
+    @overload
+    def __get__(self, obj: None, objtype: type | None = None) -> ViewSpec: ...
+
+    @overload
+    def __get__(self, obj: object, objtype: type | None = None) -> ViewHandle: ...
+
+    def __get__(self, obj: object | None, objtype: type | None = None) -> ViewSpec | ViewHandle:
+        if obj is None:
+            return self  # class-level access: the spec itself
+        assert self.name is not None, "ViewSpec not attached to a class"
+        key = f"_view_{self.name}"
+        handle = obj.__dict__.get(key)
+        if handle is None:
+            handle = self._make_handle()
+            obj.__dict__[key] = handle
+        return handle
+
+    def __set__(self, obj: object, value: Any) -> None:
+        raise AttributeError(f"view {self.name!r} is not assignable; push to it instead")
+
+    def _make_handle(self) -> ViewHandle:
+        return LineViewHandle(self) if self.kind is ViewKind.LINE else SeriesViewHandle(self)
+
 
 class ViewHandle(ABC):
-    """A handle to a declared view, returned by ``Experiment.view()``.
+    """An instance's handle to a view declared by :func:`view`.
 
     ``push()`` updates the latest value and marks the panel dirty.
     """
@@ -114,3 +146,43 @@ class SeriesViewHandle(ViewHandle):
         if not self._x:
             return None
         return self._x, self._y
+
+
+@overload
+def view(
+    title: str,
+    kind: Literal[ViewKind.LINE],
+    *,
+    x_unit: str | None = None,
+    y_unit: str | None = None,
+) -> LineViewHandle: ...
+
+
+@overload
+def view(
+    title: str,
+    kind: Literal[ViewKind.SERIES],
+    *,
+    x_unit: str | None = None,
+    y_unit: str | None = None,
+) -> SeriesViewHandle: ...
+
+
+def view(
+    title: str,
+    kind: ViewKind,
+    *,
+    x_unit: str | None = None,
+    y_unit: str | None = None,
+) -> Any:
+    """Declare a live view on an Experiment class, next to ``param()``.
+
+    Examples::
+
+        trace = view("Sine", ViewKind.LINE, y_unit="V")
+        means = view("Mean vs voltage", ViewKind.SERIES, x_unit="V", y_unit="V")
+
+    Panels are drawn in declaration order. Push to ``self.<name>`` inside ``shot()``to
+    update the panel.
+    """
+    return ViewSpec(title=title, kind=kind, x_unit=x_unit, y_unit=y_unit)

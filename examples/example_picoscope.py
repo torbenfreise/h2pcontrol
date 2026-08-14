@@ -51,7 +51,7 @@ from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
 from h2pcontrol.controller.framework.results import Results, result
 from h2pcontrol.controller.framework.stubs import service_stub
-from h2pcontrol.controller.framework.views import ViewKind
+from h2pcontrol.controller.framework.views import ViewKind, view
 
 if TYPE_CHECKING:
     from grpc.aio import UnaryStreamCall
@@ -86,6 +86,9 @@ class PicoscopeRapidBlockExperiment(Experiment):
 
     # PulseBlaster pulse period.
     period_ns = param(4000, min=200, max=100000, unit="ns")
+
+    # Live view: every capture replaces the curve.
+    captures = view("Picoscope captures", ViewKind.LINE, x_unit="us", y_unit="V")
 
     # Declared results: one row per capture.
     class Record(Results):
@@ -127,7 +130,6 @@ class PicoscopeRapidBlockExperiment(Experiment):
         # than storing it per capture.
         self._sample_interval_ns = timebase.sample_interval_ns
         self._times_us = np.arange(self.post_samples) * self._sample_interval_ns / 1000.0
-        self.captures = self.view("Picoscope captures", ViewKind.LINE, x_unit="us", y_unit="V")
 
     def metadata(self) -> Mapping[str, str]:
         # The sample grid is constant for the run and lives on the view (UI-only),

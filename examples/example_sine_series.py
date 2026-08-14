@@ -5,7 +5,7 @@ import numpy as np
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.parameters import param
 from h2pcontrol.controller.framework.results import Results, result
-from h2pcontrol.controller.framework.views import ViewKind
+from h2pcontrol.controller.framework.views import ViewKind, view
 
 
 class SineSeries(Experiment):
@@ -19,11 +19,10 @@ class SineSeries(Experiment):
     amplitude = param(1.0, min=0.0, max=10.0, unit="V")
     period = param(20.0, min=2.0, max=200.0, description="shots per cycle")
 
+    series = view("Sine", ViewKind.SERIES, y_unit="V")
+
     class Record(Results):
         signal: float = result(unit="V", description="signal")
-
-    async def setup(self) -> None:
-        self.series = self.view("Sine", ViewKind.SERIES, y_unit="V")
 
     async def shot(self, ctx: Context) -> list[Record]:
         await asyncio.sleep(0.05)

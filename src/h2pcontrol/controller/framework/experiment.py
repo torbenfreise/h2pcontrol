@@ -10,7 +10,7 @@ import pandas as pd
 from .parameters import ParamSpec
 from .results import Results, ResultSpec
 from .stubs import StubSpec
-from .views import LineViewHandle, SeriesViewHandle, ViewHandle, ViewKind, ViewSpec
+from .views import ViewHandle, ViewSpec
 
 
 @dataclass(frozen=True)
@@ -30,13 +30,14 @@ class Experiment(ABC):
     _results: ClassVar[dict[str, ResultSpec]] = {}
     _record: ClassVar[type[Results]] = _NoRecord
     _stubs: ClassVar[dict[str, StubSpec]] = {}
-    _views: list[ViewHandle]
+    _views: ClassVar[dict[str, ViewSpec]] = {}
 
     def __init_subclass__(cls, **kw):
         super().__init_subclass__(**kw)
         Experiment._collect_parameters(cls)
         Experiment._collect_results(cls)
         Experiment._collect_stubs(cls)
+        Experiment._collect_views(cls)
 
     @staticmethod
     def _collect_parameters(experiment_cls) -> None:
@@ -78,6 +79,19 @@ class Experiment(ABC):
 
         experiment_cls._stubs = inherited_stubs
 
+    @staticmethod
+    def _collect_views(experiment_cls) -> None:
+        """
+        Collects view() declarations. The ViewSpec stays on the class as a data descriptor: class access yields
+        the spec, instance access that instance's handle.
+        """
+        inherited = dict(experiment_cls._views)
+        for name, val in list(experiment_cls.__dict__.items()):
+            if isinstance(val, ViewSpec):
+                inherited[name] = val
+
+        experiment_cls._views = inherited
+
     @final
     async def record(self, ctx: "Context") -> pd.DataFrame:
         """
@@ -112,26 +126,9 @@ class Experiment(ABC):
         """Read-only view of this experiment's declared results."""
         return MappingProxyType(cls._results)
 
-    def view(
-        self,
-        title: str,
-        kind: ViewKind,
-        x_unit: str | None = None,
-        y_unit: str | None = None,
-    ) -> ViewHandle:
-        """Declare a live view and return a handle to push values to. Call from ``setup()``."""
-        spec = ViewSpec(title=title, x_unit=x_unit, y_unit=y_unit)
-        handle: ViewHandle = (
-            LineViewHandle(spec) if kind is ViewKind.LINE else SeriesViewHandle(spec)
-        )
-        if "_views" not in self.__dict__:
-            self._views = []
-        self._views.append(handle)
-        return handle
-
     def views(self) -> tuple[ViewHandle, ...]:
-        """Views declared during ``setup()``, in declaration order."""
-        return tuple(self.__dict__.get("_views", ()))
+        """This instance's handles for every view declared on the class, in declaration order."""
+        return tuple(getattr(self, name) for name in type(self)._views)
 
     @final
     async def connect(self, client: Any) -> None:
