@@ -17,7 +17,7 @@ import pytest
 
 from h2pcontrol.controller.framework.experiment import Context, Experiment
 from h2pcontrol.controller.framework.results import Results, result
-from h2pcontrol.controller.framework.views import SeriesViewHandle, ViewKind
+from h2pcontrol.controller.framework.views import SeriesViewHandle, ViewKind, view
 from h2pcontrol.controller.runtime.events import (
     EngineEvent,
     EngineState,
@@ -649,11 +649,10 @@ class TestViews:
         class ViewExp(Experiment):
             name = "ViewExp"
 
+            series = view("P", ViewKind.SERIES, y_unit="V")
+
             class Record(Results):
                 yr: float = result(unit="V")
-
-            async def setup(self) -> None:
-                self.series = self.view("P", ViewKind.SERIES, y_unit="V")
 
             async def shot(self, ctx: Context) -> list[Record]:
                 self.series.push(ctx.shot_idx, 1.0)
