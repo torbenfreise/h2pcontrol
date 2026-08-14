@@ -82,8 +82,8 @@ class Experiment(ABC):
     @staticmethod
     def _collect_views(experiment_cls) -> None:
         """
-        Collects view() declarations. The ViewSpec stays on the class as a data descriptor: class access yields
-        the spec, instance access that instance's handle.
+        Collects view() declarations. The ViewSpec stays on the class as a data descriptor:
+        class access yields the spec, instance access that instance's handle.
         """
         inherited = dict(experiment_cls._views)
         for name, val in list(experiment_cls.__dict__.items()):
