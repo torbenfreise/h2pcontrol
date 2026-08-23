@@ -379,7 +379,7 @@ wheels = [
 
 [[package]]
 name = "h2pcontrol"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "beyer-labs-h2pcontrol-community-nipunn1313-mypy" },

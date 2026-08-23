@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "h2pcontrol"
-version = "0.1.0"
+version = "0.1.1"
 description = "The controller software"
 readme = "README.md"
 license = { text = "MIT" }
