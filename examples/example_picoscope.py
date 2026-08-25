@@ -85,7 +85,7 @@ class PicoscopeRapidBlockExperiment(Experiment):
     captures_per_shot = param(1, min=1, max=1000)
 
     # PulseBlaster pulse period.
-    period_ns = param(4000, min=200, max=100000, unit="ns")
+    period_ns = param(2000, min=2000, max=20000, unit="ns")
 
     # Live view: every capture replaces the curve.
     captures = view("Picoscope captures", ViewKind.LINE, x_unit="us", y_unit="V")
