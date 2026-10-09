@@ -3,9 +3,7 @@ from pathlib import Path
 
 import numpy as np
 
-from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import Results, result
+from h2pcontrol.controller.framework import Context, Experiment, Results, param, result
 
 
 class SineExperiment(Experiment):

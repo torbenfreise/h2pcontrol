@@ -9,10 +9,14 @@ from typing import TYPE_CHECKING
 from h2pcontrol.example.v1.example_pb2 import SayHelloRequest
 from h2pcontrol.example.v1.example_pb2_grpc import ExampleServiceStub
 
-from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import Results, result
-from h2pcontrol.controller.framework.stubs import service_stub
+from h2pcontrol.controller.framework import (
+    Context,
+    Experiment,
+    Results,
+    param,
+    result,
+    service_stub,
+)
 
 if TYPE_CHECKING:
     from h2pcontrol.example.v1.example_pb2_grpc import ExampleServiceAsyncStub

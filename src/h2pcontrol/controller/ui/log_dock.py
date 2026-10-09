@@ -1,7 +1,7 @@
 """Docked, filterable log table aggregating controller / experiment / manager logs.
 
-Fed synthetic-or-real ``LogLine``s via :meth:`LogDock.append_record`; never
-touches the network itself. Rows are bounded by a ``deque(maxlen=…)`` in the
+Fed synthetic-or-real `LogLine`s via `LogDock.append_record()`; never
+touches the network itself. Rows are bounded by a `deque(maxlen=…)` in the
 model. Source/level filters are multiselect (empty = all), search is a
 case-insensitive substring of the message.
 """
@@ -141,9 +141,9 @@ class MultiSelectButton[K](QToolButton):
 
 
 class LogTableModel(QAbstractTableModel):
-    """Table model over a bounded deque of ``LogLine`` objects.
+    """Table model over a bounded deque of `LogLine` objects.
 
-    Emits :attr:`source_added` the first time each distinct source appears.
+    Emits `source_added` the first time each distinct source appears.
     """
 
     source_added = Signal(str)

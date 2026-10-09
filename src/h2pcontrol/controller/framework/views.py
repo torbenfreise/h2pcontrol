@@ -25,7 +25,9 @@ class ViewKind(StrEnum):
 
 @dataclass(eq=False)
 class ViewSpec:
-    """A live panel, declared in the class body by :func:`view`."""
+    """A live panel, declared in the class body by
+    [view][h2pcontrol.controller.framework.views.view].
+    """
 
     title: str
     kind: ViewKind
@@ -65,9 +67,10 @@ class ViewSpec:
 
 
 class ViewHandle(ABC):
-    """An instance's handle to a view declared by :func:`view`.
+    """An instance's handle to a view declared by
+    [view][h2pcontrol.controller.framework.views.view].
 
-    ``push()`` updates the latest value and marks the panel dirty.
+    `push()` updates the latest value and marks the panel dirty.
     """
 
     def __init__(self, spec: ViewSpec) -> None:
@@ -81,7 +84,7 @@ class ViewHandle(ABC):
 
     @abstractmethod
     def plot_data(self) -> tuple[XY, XY] | None:
-        """The (x, y) to draw, or ``None`` before the first push."""
+        """The (x, y) to draw, or `None` before the first push."""
 
     def _mark_pushed(self) -> None:
         self._push_thread = threading.get_ident()
@@ -89,7 +92,7 @@ class ViewHandle(ABC):
 
     @property
     def dirty(self) -> bool:
-        """True if a value has been pushed since the last :meth:`clear_dirty`."""
+        """True if a value has been pushed since the last `clear_dirty()`."""
         return self._dirty
 
     def clear_dirty(self) -> None:
@@ -175,14 +178,16 @@ def view(
     x_unit: str | None = None,
     y_unit: str | None = None,
 ) -> Any:
-    """Declare a live view on an Experiment class, next to ``param()``.
+    """Declare a live view on an Experiment class, next to `param()`.
 
-    Examples::
+    Examples:
 
-        trace = view("Sine", ViewKind.LINE, y_unit="V")
-        means = view("Mean vs voltage", ViewKind.SERIES, x_unit="V", y_unit="V")
+    ```python
+    trace = view("Sine", ViewKind.LINE, y_unit="V")
+    means = view("Mean vs voltage", ViewKind.SERIES, x_unit="V", y_unit="V")
+    ```
 
-    Panels are drawn in declaration order. Push to ``self.<name>`` inside ``shot()``to
+    Panels are drawn in declaration order. Push to `self.<name>` inside `shot()` to
     update the panel.
     """
     return ViewSpec(title=title, kind=kind, x_unit=x_unit, y_unit=y_unit)

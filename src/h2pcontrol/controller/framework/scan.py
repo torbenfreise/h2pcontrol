@@ -13,21 +13,29 @@ from .parameters import ParameterError, ParamSpec
 class Axis:
     """One scan dimension over a declared experiment parameter.
 
-    Continuous scan (start/stop/steps)::
+    Continuous scan (start/stop/steps):
 
-        Axis(MyExperiment.voltage, start=0.0, stop=5.0, steps=11)
+    ```python
+    Axis(MyExperiment.voltage, start=0.0, stop=5.0, steps=11)
+    ```
 
-    Centered scan (center ± span/2)::
+    Centered scan (center ± span/2):
 
-        Axis.centered(MyExperiment.voltage, center=2.5, span=5.0, steps=11)
+    ```python
+    Axis.centered(MyExperiment.voltage, center=2.5, span=5.0, steps=11)
+    ```
 
-    Explicit value list::
+    Explicit value list:
 
-        Axis.from_list(MyExperiment.voltage, [1.0, 2.0, 5.0])
+    ```python
+    Axis.from_list(MyExperiment.voltage, [1.0, 2.0, 5.0])
+    ```
 
-    Discrete scan over all choices declared on the parameter::
+    Discrete scan over all choices declared on the parameter:
 
-        Axis(MyExperiment.mode)
+    ```python
+    Axis(MyExperiment.mode)
+    ```
     """
 
     param: ParamSpec[Any]

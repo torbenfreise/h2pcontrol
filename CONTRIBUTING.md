@@ -9,7 +9,7 @@ uv sync
 ## Format and linting
 
 This project uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
-The checks are run automatically on every pull request in the [GitHub Actions workflow](.github/workflows/lint.yml)
+The checks are run automatically on every pull request in the [GitHub Actions workflow](https://github.com/torbenfreise/h2pcontrol/blob/main/.github/workflows/lint.yml)
 and are a pre-condition for merging.
 
 To run the same checks locally:
@@ -21,7 +21,7 @@ uv run pyright src/ tests/ examples/           # type-check
 ```
 
 These checks also run automatically on every pull request and pushes to main via
-the [github workflow](./.github/workflows/lint.yml)
+the [github workflow](https://github.com/torbenfreise/h2pcontrol/blob/main/.github/workflows/lint.yml)
 
 ## Testing
 

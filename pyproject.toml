@@ -26,7 +26,21 @@ dependencies = [
     "tables>=3.11.1",
 ]
 
+[project.urls]
+Homepage = "https://h2pcontrol.torbenfreise.dev/"
+Documentation = "https://h2pcontrol.torbenfreise.dev/"
+Repository = "https://github.com/torbenfreise/h2pcontrol"
+
 [dependency-groups]
+# Kept separate from `dev`: the docs build uses mkdocstrings' static (griffe) analysis,
+# so it never imports h2pcontrol and needs none of the Qt/gRPC runtime dependencies.
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.27",
+    # Per-page "last updated" stamps, read from git history. Needs the docs workflow to
+    # check out with fetch-depth: 0, or every page reports the same date.
+    "mkdocs-git-revision-date-localized-plugin>=1.3",
+]
 dev = [
     "ruff==0.15.11",
     "pyright>=1.1.0",
