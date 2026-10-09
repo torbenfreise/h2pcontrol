@@ -70,7 +70,7 @@ class Session:
         return candidates[0]
 
     async def ping_manager(self) -> bool:
-        """:return True if the manager responds, else False."""
+        """Returns True if the manager responds, else False."""
         try:
             await self._client.connect()
             return True

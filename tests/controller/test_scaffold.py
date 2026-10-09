@@ -3,8 +3,15 @@ from pathlib import Path
 
 import pytest
 
+from h2pcontrol.controller import _starter
 from h2pcontrol.controller.app import _parse_args
-from h2pcontrol.controller.scaffold import STARTER_FILENAME, init_project, project_name
+from h2pcontrol.controller.framework import Experiment
+from h2pcontrol.controller.scaffold import (
+    STARTER_FILENAME,
+    init_project,
+    project_name,
+    starter_source,
+)
 
 
 def test_creates_expected_layout(tmp_path: Path) -> None:
@@ -37,6 +44,25 @@ def test_writes_starter_experiment(tmp_path: Path) -> None:
 
     assert starter.is_file()
     assert "class Ramp(Experiment)" in starter.read_text()
+
+
+def test_starter_is_the_packaged_module_verbatim(tmp_path: Path) -> None:
+    """The scaffolded file is _starter.py itself, so ruff and pyright cover it."""
+    root = init_project(tmp_path / "lab")
+    starter = (root / "experiments" / STARTER_FILENAME).read_text()
+
+    packaged = Path(_starter.__file__).read_text()
+    assert starter == packaged == starter_source()
+
+
+def test_starter_defines_a_runnable_experiment() -> None:
+    """Guards against the starter drifting out of sync with the framework API."""
+    ramp = _starter.Ramp()
+
+    assert issubclass(type(ramp), Experiment)
+    assert ramp.name == "Ramp"
+    assert ramp.amplitude == 1.0
+    assert "value" in ramp.Record.specs()
 
 
 def test_results_is_gitignored(tmp_path: Path) -> None:

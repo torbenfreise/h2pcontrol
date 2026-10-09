@@ -20,3 +20,6 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+
+# Docs build output
+site/

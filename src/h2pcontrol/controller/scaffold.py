@@ -1,5 +1,6 @@
 import logging
 import re
+from importlib import resources
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -41,37 +42,17 @@ __pycache__/
 results/
 """
 
-_STARTER = '''"""
-Example Experiment declaring a series plot.
-Open it with File -> Open Experiment, set Repeats, and press Schedule. 
-Does not required the h2pmanager or any device servers.
-"""
-
-from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import Results, result
-from h2pcontrol.controller.framework.views import ViewKind, view
+_STARTER_MODULE = "_starter.py"
 
 
-class Ramp(Experiment):
-    # Title shown in the GUI.
-    name = "Ramp"
+def starter_source() -> str:
+    """The starter experiment shipped by `h2pcontrol init`.
 
-    # Editable in gui. its value is stored for every shot.
-    amplitude = param(1.0, min=0.0, max=10.0, unit="V")
-
-    # A live plot panel. SERIES accumulates one point per push.
-    signal = view("Signal", ViewKind.SERIES, y_unit="V")
-
-    # One row of recorded data. Determines the HDF5 schema
-    class Record(Results):
-        value: float = result(unit="V")
-
-    async def shot(self, ctx: Context) -> list[Record]:
-        value = self.amplitude * ctx.shot_idx
-        self.signal.push(ctx.shot_idx, value)
-        return [self.Record(value=value)]
-'''
+    Read from `_starter.py` rather than held as a string literal, so that ruff and
+    pyright check the one piece of code every new user reads, and the docs can include
+    it verbatim.
+    """
+    return resources.files("h2pcontrol.controller").joinpath(_STARTER_MODULE).read_text("utf-8")
 
 
 def project_name(directory: Path) -> str:
@@ -109,7 +90,7 @@ def init_project(directory: Path, *, force: bool = False) -> Path:
     _write(root / ".gitignore", _GITIGNORE, label=".gitignore", force=force)
     _write(
         experiments / STARTER_FILENAME,
-        _STARTER,
+        starter_source(),
         label=f"experiments/{STARTER_FILENAME}",
         force=force,
     )

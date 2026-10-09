@@ -31,9 +31,10 @@ class ResultSpec:
 
 
 def result(*, unit: str | None = None, description: str | None = None) -> Any:
-    """Declare a result field on a :class:`Results` record.
+    """Declare a result field on a
+    [Results][h2pcontrol.controller.framework.results.Results] record.
 
-    Optionally specify the  ``unit`` and ``description`` (stored as HDF5 column attributes)
+    Optionally specify the `unit` and `description` (stored as HDF5 column attributes).
     """
     return field(metadata={"unit": unit, "description": description})
 
@@ -52,7 +53,8 @@ class Results:
 
     @classmethod
     def specs(cls) -> dict[str, ResultSpec]:
-        """The storage schema: one :class:`ResultSpec` per declared field.
+        """The storage schema: one
+        [ResultSpec][h2pcontrol.controller.framework.results.ResultSpec] per declared field.
 
         Dtypes are resolved from the annotations.
         """

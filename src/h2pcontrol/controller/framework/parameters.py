@@ -85,12 +85,14 @@ def param[T](
 ) -> ParamSpec[T]:
     """Declare an experiment parameter.
 
-    Examples::
+    Examples:
 
-        voltage = param(3.3, min=0.0, max=5.0, unit="V")
-        mode = param("fast", choices=("fast", "slow"))
+    ```python
+    voltage = param(3.3, min=0.0, max=5.0, unit="V")
+    mode = param("fast", choices=("fast", "slow"))
+    ```
 
-    The value type is inferred from ``default``.
+    The value type is inferred from `default`.
     """
     return ParamSpec(
         default=default,

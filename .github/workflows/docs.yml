@@ -1,0 +1,45 @@
+name: Docs
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# Allow one concurrent deployment; queue pushes rather than cancelling them.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-revision-date-localized reads each page's last commit; a shallow clone
+          # would stamp every page with the build date instead.
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v5
+      # mkdocstrings reads the source statically (griffe), so the docs build never
+      # imports h2pcontrol. Only the docs group is installed — no PySide6, no gRPC
+      # stubs from the buf.build index, no git-pinned SDK.
+      - run: uv run --only-group docs --locked mkdocs build --strict
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

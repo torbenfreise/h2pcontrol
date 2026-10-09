@@ -2,10 +2,15 @@ import asyncio
 
 import numpy as np
 
-from h2pcontrol.controller.framework.experiment import Context, Experiment
-from h2pcontrol.controller.framework.parameters import param
-from h2pcontrol.controller.framework.results import Results, result
-from h2pcontrol.controller.framework.views import ViewKind, view
+from h2pcontrol.controller.framework import (
+    Context,
+    Experiment,
+    Results,
+    ViewKind,
+    param,
+    result,
+    view,
+)
 
 
 class SineTrace(Experiment):
